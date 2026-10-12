@@ -57,16 +57,28 @@ const typing = () => document.activeElement && /INPUT|SELECT|TEXTAREA/.test(docu
 function signedIn(j) { A = { pid: j.pid, key: j.key, doc: C.merge(C.newDoc(), j.doc), meta: j.meta, synced: now() }; persist(); tab = 'home'; render(); checkPush(); }
 
 /* ---------- my alerts ---------- */
+// The back office has its own service worker scope (./admin), matching the BlovMed Admin app.
+// Android only labels alerts "BlovMed Admin" (instead of "Chrome") when the push comes through that scope.
+const SWOPT = { scope: './admin' };
+async function adminReg() {
+  let reg = await navigator.serviceWorker.getRegistration('./admin.html');
+  if (!reg || !reg.scope.endsWith('/admin')) reg = await navigator.serviceWorker.register('sw.js', SWOPT);
+  if (!reg.active) await new Promise(res => { const w = reg.installing || reg.waiting; if (!w) return res(); w.addEventListener('statechange', () => { if (w.state === 'activated') res(); }); setTimeout(res, 8000); });
+  return reg;
+}
 const b64 = x => { x = x.replace(/-/g, '+').replace(/_/g, '/'); return Uint8Array.from(atob(x + '='.repeat((4 - x.length % 4) % 4)), c => c.charCodeAt(0)); };
 async function checkPush() {
-  try { if (!('serviceWorker' in navigator) || !('PushManager' in window)) return; const reg = await navigator.serviceWorker.ready, s = await reg.pushManager.getSubscription(); pushOn = !!s && Notification.permission === 'granted';
+  try { if (!('serviceWorker' in navigator) || !('PushManager' in window)) return; const reg = await adminReg(); let s = await reg.pushManager.getSubscription();
+    // alerts were allowed before, from the old shared scope: move them to the back office's own scope automatically
+    if (!s && Notification.permission === 'granted') s = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(CFG.vapid) }).catch(() => null);
+    pushOn = !!s && Notification.permission === 'granted';
     if (pushOn && A) { A.sendSub = s.toJSON(); queueSync(0); } } catch (e) {}
 }
 async function enablePush() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return say('Alerts not available here', 'On iPhone, add this page to your Home Screen first. On Android, use Chrome.', '🔔');
   try {
     if (await Notification.requestPermission() !== 'granted') return say('Alerts were blocked', 'Turn on notifications for this site in your phone settings.', '🔕');
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await adminReg();
     const s = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(CFG.vapid) });
     A.sendSub = s.toJSON(); pushOn = true; await sync(); render(); toast('Alerts are on for this device 🔔');
   } catch (e) { say('Could not turn on alerts', esc(e.message), '😕'); }
@@ -291,5 +303,5 @@ const liveT = {};
 document.addEventListener('input', ev => { const k = ev.target.dataset && ev.target.dataset.s; if (!A || !['name', 'helper', 'gift'].includes(k)) return; clearTimeout(liveT[k]); liveT[k] = setTimeout(() => { A.doc.cfg = { ...A.doc.cfg, [k]: ev.target.value.trim(), u: now() }; quiet(); }, 600); });
 setInterval(() => { if (A && !U.sheetOpen() && !typing()) render(); }, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && A) sync(); });
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', SWOPT).catch(() => {});
 render(); if (A) { sync(); checkPush(); }

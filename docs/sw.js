@@ -1,6 +1,6 @@
 // BlovMed service worker: offline cache, push, and quick updates.
 // Bump V whenever you change any app file.
-const V = 'blovmed-v10';
+const V = 'blovmed-v11';
 const FILES = ['./', 'index.html', 'admin.html', 'app.css', 'core.js', 'ui.js', 'cars.js', 'app.js', 'admin.js', 'config.js', 'manifest.json', 'manifest-admin.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'admin-180.png', 'admin-192.png', 'admin-512.png', 'badge-96.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(V).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
