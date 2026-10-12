@@ -1,0 +1,16 @@
+{
+  "id": "./admin.html",
+  "name": "BlovMed Admin",
+  "short_name": "BlovMed Admin",
+  "description": "BlovMed back office: follow and help with his meds.",
+  "start_url": "./admin.html",
+  "scope": "./admin",
+  "display": "standalone",
+  "background_color": "#FFF1F6",
+  "theme_color": "#7B3FA8",
+  "icons": [
+    { "src": "admin-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "admin-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "admin-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

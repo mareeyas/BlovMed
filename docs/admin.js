@@ -16,6 +16,19 @@ const CX = { doc, save, quiet, render: () => render() };
 U.setCtx(CX, 'admin');
 const now = () => Date.now();
 let tab = 'home', pushOn = false, healthSeg = 'log', loginMode = 'in', feedWho = 'all';
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; if (A) render(); });
+window.addEventListener('appinstalled', () => { installEvt = null; toast('BlovMed Admin installed 🎉'); if (A) render(); });
+const canInstall = () => !standalone && (installEvt || isIOS);
+function installSheet() {
+  U.openSheet(`<h1 style="margin-top:0">📲 Install BlovMed Admin</h1><p class="sub">Get it on your Home Screen with its own icon. Alerts then show as "BlovMed Admin".</p>
+   <div class="step"><span class="n">1</span><span><b>In Safari, tap Share</b><span>The square with an arrow, at the bottom.</span></span></div>
+   <div class="step"><span class="n">2</span><span><b>Tap "Add to Home Screen"</b><span>Scroll down a little if you don't see it.</span></span></div>
+   <div class="step"><span class="n">3</span><span><b>Tap "Add"</b><span>Then open BlovMed Admin from your Home Screen and sign in once.</span></span></div>
+   <div class="sbar"><span></span><button class="btn" data-a="close">Got it</button></div>`);
+}
 const appLink = () => location.href.replace(/admin\.html.*$/, '').replace(/[#?].*$/, '');
 
 /* ---------- sync ---------- */
@@ -157,6 +170,7 @@ function viewSettings() {
      <button class="btn ghost full" style="margin-top:10px" data-a="logoutall">Sign him out of all devices</button>` : ''}</div>
   <div class="card"><label style="margin-top:0">His name</label><input type="text" data-s="name" value="${esc(c.name)}"><label>Your name (shown on his app)</label><input type="text" data-s="helper" value="${esc(c.helper)}" placeholder="e.g. Mary">
    <label>💌 Welcome message for him</label><textarea data-s="gift" rows="3" placeholder="Shown on the first screen of his welcome guide">${esc(c.gift || '')}</textarea></div>
+  ${canInstall() ? `<div class="card" style="border-color:var(--acc)"><b>📲 Install the back office</b><p class="mini" style="margin:6px 0 10px">Install it like an app, with its own BlovMed Admin icon. Its alerts then show with that name and icon.</p><button class="btn full" data-a="install">Install BlovMed Admin</button></div>` : ''}
   <div class="card"><b>🔔 My alerts (this device)</b><p class="mini">Missed doses, low stock, sick logs and updates, profile changes and things he adds to his buy list.</p>
    ${pushOn && m.subs && m.subs.admin ? '<span class="pill ok">Alerts are on</span>' : '<button class="btn full" data-a="perm">Turn on alerts for me</button>'}
    <label>Tell me when a dose is not logged after</label>${opt('miss', [0, 30, 60, 120], ['Never', '30 min', '1 hour', '2 hours'])}
@@ -195,7 +209,7 @@ function render() {
   document.body.classList.add('wide');
   if (!A) { U.keep($('#app'), () => { $('#app').innerHTML = viewLogin(); }); $('#nav').innerHTML = ''; return; }
   const nm = ((A.meta || {}).adminNames || [])[0];
-  U.keep($('#app'), () => { $('#app').innerHTML = `<div class="topbar">${nm ? '@' + esc(nm) + ' · ' : ''}<span>${A.synced ? 'live · ' + U.ago(A.synced) : ''}</span><button class="mini-btn ghost" data-a="logout">Sign out</button></div>`
+  U.keep($('#app'), () => { $('#app').innerHTML = `<div class="topbar">${nm ? '@' + esc(nm) + ' · ' : ''}<span>${A.synced ? 'live · ' + U.ago(A.synced) : ''}</span>${canInstall() ? '<button class="mini-btn" data-a="install">📲 Install</button>' : ''}<button class="mini-btn ghost" data-a="logout">Sign out</button></div>`
     + (tab === 'home' ? viewHome() : tab === 'act' ? viewActivity() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(A.doc, true) : tab === 'health' ? viewHealth() : tab === 'buy' ? U.buyHtml(A.doc, true) : viewSettings()); });
   $('#nav').innerHTML = [['home', '📋', 'Overview'], ['act', '📜', 'Activity'], ['meds', '💊', 'Meds'], ['health', '🩺', 'Health'], ['buy', '🛒', 'Buy'], ['set', '⚙️', 'Settings']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
 }
@@ -231,6 +245,7 @@ document.addEventListener('click', async ev => {
   else if (a === 'ctog') { D.cfg = { ...D.cfg, [b.dataset.k]: !D.cfg[b.dataset.k], u: t }; save(); }
   else if (a === 'copt') { D.cfg = { ...D.cfg, [b.dataset.k]: JSON.parse(b.dataset.v), u: t }; save(); }
   else if (a === 'perm') enablePush();
+  else if (a === 'install') { if (installEvt) { installEvt.prompt(); const r = await installEvt.userChoice.catch(() => ({})); if (r && r.outcome === 'accepted') installEvt = null; render(); } else installSheet(); }
   else if (a === 'feedwho') { feedWho = b.dataset.k; render(); }
   else if (a === 'telltake') { D.cfg = { ...D.cfg, tellTake: D.cfg.tellTake === false, u: t }; save(); }
   else if (a === 'wipe') {
