@@ -41,7 +41,7 @@ nav button.on{color:var(--acc);background:var(--bg)}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:flex-end;z-index:9}.sheet.open{display:flex}
 .sheet>div{background:var(--bg);width:100%;max-width:560px;margin:0 auto;border-radius:24px 24px 0 0;padding:18px 16px calc(24px + env(safe-area-inset-bottom,0px));max-height:92%;overflow:auto}
 label{display:block;font-weight:700;margin:12px 0 4px;font-size:14px}
-input[type=text],input[type=number],input[type=time],input[type=date],select{width:100%;font:inherit;padding:11px;border-radius:12px;border:2px solid var(--line);background:var(--card);color:var(--ink);font-size:16px}
+input[type=text],input[type=number],input[type=time],input[type=date],input[type=password],input[type=tel],input[type=email],select{width:100%;font:inherit;padding:11px;border-radius:12px;border:2px solid var(--line);background:var(--card);color:var(--ink);font-size:16px}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .tc{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.tc span{background:var(--card);border:2px solid var(--line);border-radius:99px;padding:6px 8px 6px 14px;font-weight:700}
 .tc button{border:0;background:none;color:var(--bad);font-weight:700;padding:0 6px}
@@ -130,3 +130,35 @@ details.sec>div{padding:0 14px 12px}
 .ttl{display:flex;flex-wrap:wrap;gap:6px}.ttl span{border:2px solid var(--line);border-radius:99px;padding:3px 10px;font-size:13px;font-weight:700}.ttl span.on{background:var(--acc);color:var(--accink);border-color:var(--acc)}
 .link{background:none;border:0;color:var(--mute);text-decoration:underline;font-size:14px;padding:8px;width:100%}
 nav:empty{display:none}
+
+/* ---------- v6 ---------- */
+main{position:relative}
+.avatar{width:40px;height:40px;border-radius:50%;background:var(--acc);color:var(--accink);font-weight:800;border:0;display:grid;place-items:center;font-size:17px}
+.avatar.top{position:absolute;right:16px;top:12px;z-index:5}
+.avatar.big{width:72px;height:72px;font-size:32px;margin:0 auto}
+.seg{display:flex;background:var(--card);border:2px solid var(--line);border-radius:14px;padding:3px;margin:8px 0 14px}
+.seg button{flex:1;border:0;background:none;padding:8px;border-radius:11px;font-weight:700;font-size:15px;color:var(--mute)}.seg button.on{background:var(--acc);color:var(--accink)}
+.logitem{width:100%;text-align:left;font:inherit;color:inherit;display:block}
+.tl{border-left:3px solid var(--line);margin-left:6px;padding-left:14px}.tl>div{position:relative;margin:4px 0 12px;font-size:15px}
+.tl>div:before{content:"";position:absolute;left:-21px;top:4px;width:11px;height:11px;border-radius:50%;background:var(--acc);border:2px solid var(--card)}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:8px}.cal i{aspect-ratio:1;border-radius:9px;display:grid;place-items:center;font-size:12px;font-style:normal;font-weight:700;background:var(--line);color:var(--mute)}
+.cal i.full{background:var(--ok);color:#fff}.cal i.part{background:var(--warnbg);color:var(--warn)}.cal i.miss{background:var(--badbg);color:var(--bad)}.cal i.rest{background:transparent;border:2px dashed var(--line)}.cal i.today{outline:3px solid var(--acc)}
+.cal b{font-size:11px;color:var(--mute);text-align:center}
+.bigstat{font-size:44px;font-weight:800;text-align:center;line-height:1.1;margin:6px 0 0}.bigstat+p{text-align:center;color:var(--mute);margin:2px 0 12px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--mute);margin-top:8px}.legend span:before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px;background:var(--c)}
+.pinput{letter-spacing:10px;font-size:24px!important;text-align:center;font-weight:700}
+.gh{font-size:14px;color:var(--mute);margin:14px 0 6px;font-weight:700}
+.garage.ships{grid-template-columns:1fr}
+.garage.ships svg{max-width:220px}
+/* sea scene for battleships */
+.scene.sea{background:linear-gradient(#BEE3FF,#EAF7FF)}
+:root[data-theme="dark"] .scene.sea{background:linear-gradient(#1B2C44,#22395A)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .scene.sea{background:linear-gradient(#1B2C44,#22395A)}}
+.water{position:absolute;left:0;right:0;bottom:0;height:42px;background:linear-gradient(#3C8FD8,#1E5FA8)}
+.water:before{content:"";position:absolute;left:0;right:0;top:-5px;height:10px;background:radial-gradient(ellipse 11px 6px at 11px 10px,#3C8FD8 98%,transparent 100%) repeat-x;background-size:22px 10px;animation:wave 2.4s linear infinite}
+.scene.fast .water:before{animation-duration:.35s}
+@keyframes wave{to{background-position:-22px 0}}
+.scene.sea .car{bottom:6px;width:156px}
+.scene.sea .car.idle svg{animation:bob 2.6s ease-in-out infinite}@keyframes bob{50%{transform:translateY(2px) rotate(-1.2deg)}}
+.scene.sea .smoke{background:radial-gradient(circle,#fff 0,#E8F6FF 55%,transparent 70%)}
+.scene.sea .skid{background:rgba(255,255,255,.85);bottom:12px;height:4px}

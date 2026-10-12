@@ -9,7 +9,7 @@ export const tm = ts => { const d = new Date(ts); return C.fmtT(C.pad(d.getHours
 export const fmtDT = ts => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + tm(ts);
 export const ago = t => { const h = (Date.now() - t) / 36e5; return h < 1 / 60 ? 'just now' : h < 1 ? Math.round(h * 60) + ' min ago' : h < 24 ? (Math.round(h * 10) / 10) + ' h ago' : Math.floor(h / 24) + ' days ago'; };
 export const pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
-export function toast(msg) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 2700); }
+export function toast(msg) { document.querySelectorAll('.toast').forEach(x => x.remove()); const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 2700); }
 /* ---------- clean pop-up questions (instead of the browser's "site says" boxes) ---------- */
 export function ask({ title, text = '', ok = 'OK', cancel = 'Cancel', danger = false, icon = '' }) {
   return new Promise(res => {
@@ -331,3 +331,126 @@ export function uiChange(ev) {
 }
 // live update while typing in the buy sheet and price calculator
 export function uiInput(ev) { if (ev.target.closest('#sheet') && (sheetKind === 'buy' || ev.target.id === 'f_pack' || ev.target.id === 'f_packn')) uiChange(ev); }
+
+/* ======================================================================
+   v6 shared screens: profile, sick logbook, buy list
+   ====================================================================== */
+let ROLE = 'phone';
+export function setCtx(cx, role) { CX = cx; ROLE = role; }
+const nowMs = () => Date.now();
+const tel = p => p ? `<a href="tel:${esc(String(p).replace(/[^\d+]/g, ''))}" style="color:var(--acc);font-weight:700">${esc(p)}</a>` : '';
+export const age = b => { if (!b) return ''; const d = new Date(b + 'T00:00'), n = new Date(); let a = n.getFullYear() - d.getFullYear(); if (n.getMonth() < d.getMonth() || (n.getMonth() === d.getMonth() && n.getDate() < d.getDate())) a--; return a >= 0 && a < 130 ? a : ''; };
+
+/* ---------- profile ---------- */
+const PF = [
+  ['Me', [['full', 'Full name'], ['birth', 'Birthday', 'date'], ['sex', 'Sex', 'sel', ['', 'Male', 'Female', 'Prefer not to say']], ['height', 'Height (cm)', 'number'], ['weight', 'Weight (kg)', 'number'], ['phone', 'My phone', 'tel'], ['address', 'Address']]],
+  ['Health', [['blood', 'Blood type', 'sel', ['', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', "Don't know"]], ['allergies', 'Allergies (medicines, food)', 'area'], ['conditions', 'Health conditions', 'area'], ['surgeries', 'Past surgeries or hospital stays', 'area']]],
+  ['Doctor', [['doctor', "Doctor's name"], ['clinic', 'Clinic or hospital'], ['docphone', "Doctor's phone", 'tel']]],
+  ['Emergency contact', [['emname', 'Name'], ['emrel', 'Relationship'], ['emphone', 'Phone', 'tel']]],
+  ['Insurance', [['hmo', 'HMO or insurance'], ['hmono', 'Member number']]],
+  ['Notes', [['notes', 'Anything else', 'area']]],
+];
+export function profileHtml(doc, admin) {
+  const p = doc.prof || {}, name = p.full || doc.cfg.name || 'Your profile', a = age(p.birth), meds = C.medList(doc);
+  const val = (k, t) => p[k] ? (t === 'tel' ? tel(p[k]) : t === 'date' ? new Date(p[k] + 'T00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : esc(p[k]).replace(/\n/g, '<br>')) : '';
+  const filled = PF.flatMap(s => s[1]).filter(([k]) => p[k]).length;
+  const sec = ([title, fields]) => { const rows = fields.filter(([k]) => p[k]); return rows.length ? `<div class="card"><b>${title}</b><dl class="kv">${rows.map(([k, l, t]) => `<dt>${l}</dt><dd>${val(k, t)}</dd>`).join('')}</dl></div>` : ''; };
+  const warn = p.allergies ? `<div class="alert bad"><i>⚠️</i><span>Allergies<small>${esc(p.allergies)}</small></span></div>` : '';
+  return `<div class="card" style="text-align:center"><div class="avatar big">${esc((name[0] || '🙂').toUpperCase())}</div><h1 style="margin:8px 0 0">${esc(name)}</h1>
+    <p class="mini" style="margin:2px 0 0">${[a !== '' ? a + ' years old' : '', p.blood ? '🩸 ' + esc(p.blood) : '', p.height ? p.height + ' cm' : '', p.weight ? p.weight + ' kg' : ''].filter(Boolean).join(' · ') || (admin ? 'Nothing filled in yet' : 'Tap Edit to fill in your info')}</p>
+    ${p.u ? `<p class="mini" style="margin:4px 0 0">Updated ${ago(p.u)}${p.by === 'admin' ? ' (by helper)' : ''}</p>` : ''}
+    <button class="btn ${filled ? 'ghost' : ''} full" style="margin-top:12px" data-a="profedit">${filled ? '✏️ Edit' : '✏️ Fill in my info'}</button></div>
+    ${warn}${PF.map(sec).join('')}
+    ${meds.length ? `<div class="card"><b>Medicines</b>${meds.map(m => `<div class="row mini"><span>💊 ${esc(m.name)}${m.purpose ? ' · ' + esc(m.purpose) : ''}</span><span>${esc(C.schedText(m).replace(/^Every day at /, ''))}</span></div>`).join('')}</div>` : ''}
+    <p class="mini">🔒 Only you and your helper can see this.</p>`;
+}
+export function openProfileEdit() {
+  const p = CX.doc().prof || {};
+  const field = ([k, l, t, opts]) => `<label>${l}</label>${t === 'area' ? `<textarea id="pf_${k}" rows="2">${esc(p[k] || '')}</textarea>`
+    : t === 'sel' ? `<select id="pf_${k}">${opts.map(o => `<option ${p[k] === o ? 'selected' : ''} value="${esc(o)}">${o || '—'}</option>`).join('')}</select>`
+    : `<input type="${t || 'text'}" id="pf_${k}" value="${esc(p[k] || '')}" ${t === 'number' ? 'inputmode="decimal"' : ''}>`}`;
+  sheetKind = 'prof';
+  openSheet(`<h1 style="margin-top:0">✏️ ${ROLE === 'admin' ? 'His' : 'My'} profile</h1><p class="sub">Fill in what you know. Skip anything you like.</p>
+   ${PF.map(([title, fields]) => `<details class="sec card" ${title === 'Me' ? 'open' : ''}><summary><b>${title}</b></summary><div>${fields.map(field).join('')}</div></details>`).join('')}
+   <button class="btn full big" data-a="profsave">Save</button>`);
+}
+
+/* ---------- sick logbook ---------- */
+export const SEV = ['', 'Mild', 'Moderate', 'Severe'], SEVE = ['', '🙂', '😣', '😫'];
+export const ST = { better: ['🙂', 'Better'], same: ['😐', 'Same'], worse: ['😣', 'Worse'], gone: ['✅', 'All better'], note: ['📝', 'Note'], took: ['💊', 'Took'] };
+export const symOf = s => U_SYM(s.sym) || { e: '🤒', n: s.name || 'Not feeling well' };
+const U_SYM = k => SYM[k];
+export const lastSt = s => { const u = (s.ups || []).filter(x => x.st !== 'note' && x.st !== 'took'); return u.length ? u[u.length - 1].st : ''; };
+export function sickCard(doc, s, compact) {
+  const y = symOf(s), st = lastSt(s), open = s.open === true;
+  return `<button class="card logitem" data-a="sickopen" data-id="${s.id}"><div class="row"><b>${y.e} ${esc(s.name || y.n)}</b>${open ? `<span class="pill ${st === 'worse' || s.sev === 3 ? 'bad' : 'warn'}">${st ? ST[st][0] + ' ' + ST[st][1] : 'Ongoing'}</span>` : '<span class="pill ok">Over</span>'}</div>
+   <p class="mini" style="margin:4px 0 0">${fmtDT(s.t)}${s.sev ? ' · ' + SEVE[s.sev] + ' ' + SEV[s.sev] : ''}${open ? ' · ' + ago(s.t) : s.end ? ' · lasted ' + dur(s.end - s.t) : ''}</p>
+   ${!compact && s.note ? `<p class="mini" style="margin:4px 0 0">“${esc(s.note)}”</p>` : ''}</button>`;
+}
+const dur = ms => { const h = ms / 36e5; return h < 1 ? Math.max(1, Math.round(h * 60)) + ' min' : h < 48 ? Math.round(h) + ' h' : Math.round(h / 24) + ' days'; };
+export function openSick(id) {
+  const doc = CX.doc(), s = doc.sick[id]; if (!s) return;
+  const y = symOf(s), helper = doc.cfg.helper || 'Helper', who = doc.cfg.name || 'He';
+  const ev = [{ t: s.t, h: `<b>Started</b>${s.sev ? ' · ' + SEVE[s.sev] + ' ' + SEV[s.sev] : ''}${s.note ? `<br><span class="mini">“${esc(s.note)}”</span>` : ''}` },
+    ...(s.took || []).map(x => ({ t: x.t, h: `💊 Took <b>${esc(x.name)}</b>` })),
+    ...(s.ups || []).map(u => ({ t: u.t, h: `${ST[u.st] ? ST[u.st][0] + ' <b>' + ST[u.st][1] + '</b>' : ''}${u.by === 'admin' ? ` <span class="mini">(${esc(helper)})</span>` : ''}${u.note ? `<br><span class="mini">“${esc(u.note)}”</span>` : ''}` }))].sort((a, b) => a.t - b.t);
+  sheetKind = 'sick'; SICK = id;
+  openSheet(`<h1 style="margin-top:0">${y.e} ${esc(s.name || y.n)}</h1><p class="sub">${s.open ? 'Ongoing since ' + fmtDT(s.t) : 'Over' + (s.end ? ' · lasted ' + dur(s.end - s.t) : '')}</p>
+   <div class="card"><div class="tl">${ev.map(e => `<div><span class="mini">${fmtDT(e.t)}</span><br>${e.h}</div>`).join('')}</div></div>
+   ${s.open ? (ROLE === 'phone' ? `<h2>How do you feel now?</h2><div class="opt" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${['better', 'same', 'worse', 'gone'].map(k => `<button data-a="sickup" data-st="${k}">${ST[k][0]} ${ST[k][1]}</button>`).join('')}</div>
+      <input type="text" id="sk_note" placeholder="Add a note (optional)" style="margin-top:10px">`
+     : `<h2>Send ${esc(who === 'He' ? 'him' : who)} a note</h2><textarea id="sk_note" rows="2" placeholder="e.g. Drink water and rest. Call me if it gets worse."></textarea><button class="btn full" style="margin-top:8px" data-a="sickup" data-st="note">Send note</button>
+      <button class="btn ghost full" style="margin-top:8px" data-a="sickup" data-st="gone">Mark as over</button>`) : ''}
+   ${ROLE === 'phone' ? `<button class="link" data-a="sickdel">Delete this entry</button>` : ''}`);
+}
+let SICK = null;
+
+/* ---------- buy list ---------- */
+let KINDSEL = 'other';
+const KICON = { med: '💊', food: '🍌', drink: '🥤', other: '🛍️' };
+export function buyHtml(doc, admin) {
+  const t = today().ymd, p = C.plan(doc, t), low = p.rows.filter(r => r.dl.days <= doc.cfg.lowDays);
+  const items = C.live(doc.shop), open = items.filter(s => !s.done).sort((a, b) => b.add - a.add), done = items.filter(s => s.done).sort((a, b) => b.done - a.done).slice(0, 15);
+  const who = doc.cfg.helper || 'helper';
+  return `<h1>🛒 ${admin ? 'His buy list' : 'Buy list'}</h1><p class="sub">${open.length + low.length ? pl(open.length + low.length, 'thing') + ' to get' : 'Nothing to buy right now 🎉'}</p>
+  ${low.length ? `<h2>💊 Running low</h2><div class="card">${low.map(r => `<button class="check" data-a="buy" data-id="${r.m.id}"><span class="box" style="border-color:var(--bad)">!</span><span class="tx"><b>${esc(r.m.name)}</b> · ${r.dl.days === 0 ? 'out today' : pl(r.dl.days, 'day') + ' left'}<small>${esc(C.buyAdvice(r, p, x => money(doc, x)))} Tap when bought.</small></span></button>`).join('')}</div>` : ''}
+  <h2>📝 To buy</h2><div class="card">${open.map(s => `<div class="row"><button class="check" data-a="shop" data-id="${s.id}"><span class="box">✓</span><span class="tx">${KICON[s.kind] || '🛍️'} ${esc(s.text)}<small>${s.why ? 'For ' + esc(s.why) + ' · ' : ''}${s.by === 'admin' ? 'added by ' + esc(who) + ' · ' : ''}${ago(s.add)}</small></span></button><button class="btn ghost" style="padding:4px 10px" data-a="delshop" data-id="${s.id}" aria-label="Remove">✕</button></div>`).join('') || '<p class="mini" style="margin:0">Empty. Add something below.</p>'}
+   <div class="opt" style="margin-top:12px">${Object.entries(KICON).map(([k, i]) => `<button class="${KINDSEL === k ? 'on' : ''}" data-a="kind" data-k="${k}">${i} ${{ med: 'Medicine', food: 'Food', drink: 'Drink', other: 'Other' }[k]}</button>`).join('')}</div>
+   <div class="add" style="margin-top:8px"><input type="text" id="newitem" placeholder="Add an item…"><button class="btn" data-a="additem">Add</button></div></div>
+  ${done.length ? `<details class="sec card"><summary><b>✅ Bought recently</b></summary><div>${done.map(s => `<button class="check on" data-a="shop" data-id="${s.id}"><span class="box">✓</span><span class="tx">${KICON[s.kind] || '🛍️'} ${esc(s.text)}<small>${ago(s.done)} · tap to undo</small></span></button>`).join('')}</div></details>` : ''}
+  <p class="mini">${admin ? 'He gets a reminder 1 hour after you add items, and every evening until they\'re ticked off.' : `I'll remind you about new items in 1 hour, and every evening until they're ticked off. ${esc(who)} can see this list.`}</p>`;
+}
+
+/* ---------- shared clicks for the screens above ---------- */
+export async function v6Click(a, b) {
+  if (!CX) return false;
+  const doc = CX.doc(), t = nowMs();
+  if (a === 'profedit') { openProfileEdit(); return true; }
+  if (a === 'profsave') {
+    const p = { ...(doc.prof || {}) };
+    for (const [, fields] of PF) for (const [k] of fields) { const el = $('#pf_' + k); if (el) p[k] = el.value.trim(); }
+    p.u = t; p.by = ROLE; doc.prof = p; closeSheet(); CX.save(); toast('Profile saved ✓'); return true;
+  }
+  if (a === 'sickopen') { openSick(b.dataset.id); return true; }
+  if (a === 'sickup') {
+    const s = doc.sick[SICK]; if (!s) return true;
+    const note = ($('#sk_note') && $('#sk_note').value.trim()) || '', st = b.dataset.st;
+    if (st === 'note' && !note) { say('Type a note first', '', '📝'); return true; }
+    const ns = { ...s, ups: [...(s.ups || []), { t, st, note, by: ROLE }], u: t };
+    if (st === 'gone') { ns.open = false; ns.end = t; }
+    doc.sick[s.id] = ns; closeSheet(); CX.save();
+    toast(st === 'gone' ? 'So glad you feel better 💖' : st === 'worse' ? 'Logged. Please take care 💖' : st === 'note' ? 'Note sent 💌' : 'Logged ✓');
+    if (st === 'worse' && ROLE === 'phone') say('Feeling worse?', `Check the "See a doctor if" list for ${esc(symOf(s).n.toLowerCase())}. If any of those apply, see a doctor. ${doc.prof && doc.prof.emphone ? 'Your emergency contact: ' + tel(doc.prof.emphone) : ''}`, '🚑');
+    return true;
+  }
+  if (a === 'sickdel') { const id = SICK; if (await ask({ icon: '🗑️', title: 'Delete this entry?', ok: 'Delete', danger: true })) { doc.sick[id] = { ...doc.sick[id], del: true, u: nowMs() }; closeSheet(); CX.save(); } return true; }
+  if (a === 'kind') { KINDSEL = b.dataset.k; const v = $('#newitem') ? $('#newitem').value : ''; (CX.render || CX.save)(); const n = $('#newitem'); if (n) { n.value = v; n.focus(); } return true; }
+  if (a === 'additem') {
+    const v = ($('#newitem').value || '').trim(); if (!v) return true;
+    const id = C.rid('s'); doc.shop[id] = { id, text: v, kind: KINDSEL, why: '', add: t, done: 0, by: ROLE, u: t }; CX.save(); toast('Added 🛒');
+    const n = $('#newitem'); if (n) n.focus(); return true;
+  }
+  if (a === 'shop') { const s = doc.shop[b.dataset.id]; if (s) { doc.shop[s.id] = { ...s, done: s.done ? 0 : t, u: t }; CX.save(); if (!s.done) toast('Got it ✓'); } return true; }
+  if (a === 'delshop') { const s = doc.shop[b.dataset.id]; if (s) { doc.shop[s.id] = { ...s, del: true, u: t }; CX.save(); } return true; }
+  return false;
+}

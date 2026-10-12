@@ -25,8 +25,8 @@ export const hrs = (first, gap, cnt) => { const b = mins(first), o = []; for (le
 /* ---------- the shared document ---------- */
 // Every record carries u (last changed, ms). Merging keeps the newest copy of each record,
 // so the phone and the back office can both edit and always end up with the same data.
-export const DEFCFG = { paydays: [15, 30], cur: '₱', lowDays: 4, alertHour: 10, shopHour: 18, nags: true, miss: 60, name: '', helper: '', gift: '', libPrice: {}, libOv: {}, symMeds: {}, ptsBase: 0, resetAt: 0, resetDay: '', u: 0 };
-export const newDoc = () => ({ v: 2, meds: {}, log: {}, prn: {}, buys: {}, shop: {}, sick: {}, snz: {}, cfg: { ...DEFCFG, libPrice: {}, libOv: {}, symMeds: {} } });
+export const DEFCFG = { paydays: [15, 30], cur: '₱', lowDays: 4, alertHour: 10, shopHour: 18, nags: true, miss: 60, name: '', helper: '', gift: '', libPrice: {}, libOv: {}, symMeds: {}, ptsBase: 0, resetAt: 0, resetDay: '', model: '', color: -1, u: 0 };
+export const newDoc = () => ({ v: 2, meds: {}, log: {}, prn: {}, buys: {}, shop: {}, sick: {}, snz: {}, prof: { u: 0 }, cfg: { ...DEFCFG, libPrice: {}, libOv: {}, symMeds: {} } });
 const MAPS = ['meds', 'log', 'prn', 'buys', 'shop', 'sick', 'snz'];
 const newer = (a, b) => !a || (b.u || 0) > (a.u || 0) || ((b.u || 0) === (a.u || 0) && JSON.stringify(b) > JSON.stringify(a));
 
@@ -42,6 +42,8 @@ export function merge(a, b, now = Date.now()) {
   const ca = a.cfg || {}, cb = b.cfg || {};
   o.cfg = { ...DEFCFG, ...(newer(ca, cb) ? cb : ca) };
   for (const k of ['libPrice', 'libOv', 'symMeds']) o.cfg[k] = { ...(o.cfg[k] || {}) };
+  const pa = a.prof || { u: 0 }, pb = b.prof || { u: 0 };
+  o.prof = { ...(newer(pa, pb) ? pb : pa) };
   prune(o, now);
   return o;
 }
@@ -171,6 +173,27 @@ export function stats(doc, today) {
   return { streak, pts, lvl, title: titleFor(lvl), into: pts - (lvl - 1) * PER_LEVEL, toNext: lvl * PER_LEVEL - pts, nextTitle: titleFor(lvl + 1),
     left: todayDs.filter(x => !x.at).length, todayTotal: todayDs.length };
 }
+// Each day: 'full' (all doses), 'part', 'miss' (none), 'rest' (no doses scheduled), 'today' (still going).
+export function days(doc, today, n) {
+  const rAt = doc.cfg.resetAt || 0, o = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = addD(today, -i), ds = dosesOn(doc, d), done = ds.filter(x => x.at && x.at >= rAt).length;
+    o.push({ d, total: ds.length, done, st: !ds.length ? 'rest' : done === ds.length ? 'full' : d === today ? 'today' : done ? 'part' : 'miss' });
+  }
+  return o;
+}
+export function bestStreak(doc, today) {
+  const rDay = doc.cfg.resetDay || ''; let best = 0, cur = 0;
+  for (const x of days(doc, today, 180)) { if (x.d < rDay) continue; if (x.st === 'rest' || x.st === 'today') continue; if (x.st === 'full') best = Math.max(best, ++cur); else cur = 0; }
+  return Math.max(best, stats(doc, today).streak);
+}
+// Recent stars earned, newest first.
+export function earnings(doc, today, max = 15) {
+  const rAt = doc.cfg.resetAt || 0, o = [];
+  for (const k in doc.log) { const e = doc.log[k]; if (!e.t || e.t < rAt) continue; const m = doc.meds[k.split('|')[1]]; o.push({ t: e.t, pts: 10, what: (m ? m.name : 'Dose') }); }
+  for (const x of days(doc, today, 60)) if (x.st === 'full') { const ds = dosesOn(doc, x.d); o.push({ t: Math.max(...ds.map(y => y.at)), pts: 20, what: 'Perfect day bonus' }); }
+  return o.sort((a, b) => b.t - a.t).slice(0, max);
+}
 export function week(doc, today) {
   const o = [];
   for (let i = 6; i >= 0; i--) { const d = addD(today, -i), ds = dosesOn(doc, d); o.push({ d, total: ds.length, done: ds.filter(x => x.at).length }); }
@@ -233,6 +256,16 @@ export function dueReminders(prof, sent, ms) {
   for (const t in batches) if (win((ms - +t) / 6e4, 60)) add('shop|' + t, 'phone', '🛒 Reminder: things to buy', batches[t].join(', ') + '. Tick them off in BlovMed when you have them.');
   if (open.length && win(n.min, (cfg.shopHour ?? 18) * 60)) add(n.ymd + '|shop', 'phone', '🛒 Still on your list', open.map(s => s.text).join(', '));
 
-  for (const s of live(doc.sick)) if (ms - s.t >= 0 && ms - s.t < 10 * 6e4) add('sick|' + s.id, 'admin', `${who} isn't feeling well`, `Reported: ${s.name || s.sym}.`);
+  const SEV = ['', 'mild', 'moderate', 'severe'], ST = { better: 'is feeling better', same: 'feels the same', worse: 'is feeling WORSE', gone: 'is better now ✅' };
+  for (const s of live(doc.sick)) {
+    if (s.by !== 'admin' && ms - s.t >= 0 && ms - s.t < 10 * 6e4) add('sick|' + s.id, 'admin', `${s.sev === 3 ? '⚠️ ' : ''}${who} isn't feeling well`, `${s.name || s.sym}${s.sev ? ' (' + SEV[s.sev] + ')' : ''}${s.note ? ': ' + s.note : ''}`);
+    for (const up of s.ups || []) if (up.by !== 'admin' && ms - up.t >= 0 && ms - up.t < 10 * 6e4) add('sickU|' + s.id + '|' + up.t, 'admin', `${who} ${ST[up.st] || 'updated a sick log'}`, `${s.name || s.sym}${up.note ? ': ' + up.note : ''}`);
+  }
+  for (const s of live(doc.sick)) for (const up of s.ups || []) if (up.by === 'admin' && up.note && ms - up.t >= 0 && ms - up.t < 10 * 6e4) add('sickN|' + s.id + '|' + up.t, 'phone', `💌 ${cfg.helper || 'Your helper'} sent you a note`, up.note);
+  const pf = doc.prof || {};
+  if (pf.by === 'phone' && ms - pf.u >= 0 && ms - pf.u < 10 * 6e4) add('prof|' + pf.u, 'admin', `${who} updated his profile`, 'Open the back office to see the changes.');
+  const added = {};
+  for (const s of live(doc.shop)) if (s.by === 'phone' && !s.why && ms - s.add >= 0 && ms - s.add < 10 * 6e4) (added[s.add] ||= []).push(s.text);
+  for (const t in added) add('shopA|' + t, 'admin', `${who} added to his buy list`, added[t].join(', '));
   return out;
 }

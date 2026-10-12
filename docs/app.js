@@ -1,7 +1,7 @@
 // BlovMed phone app.
 import * as C from './core.js';
 import * as U from './ui.js';
-import { CAR_MODELS, COLORS, COLOR_NAMES, carById } from './cars.js';
+import { CAR_MODELS, COLORS, COLOR_NAMES, GROUPS, carById } from './cars.js';
 const { $, esc, today, toast, pl, ask, say } = U;
 
 const CFG = window.CFG || {};
@@ -41,24 +41,24 @@ function migrate() {
 const persist = () => { try { localStorage.setItem(LK, JSON.stringify(L)); } catch (e) {} };
 const doc = () => L.doc;
 const save = () => { persist(); render(); queueSync(); };
-const CX = { doc, save };
+const CX = { doc, save, render: () => render() };
+U.setCtx(CX, 'phone');
 
 /* ---------- sync with the worker (also the backup) ---------- */
 let syncT, syncing = false, again = false;
 const queueSync = (d = 800) => { clearTimeout(syncT); syncT = setTimeout(sync, d); };
 async function sync() {
   if (!WORKER || L.moved) return;
-  if (!L.dev && isIOS && !standalone) return; // don't create a profile from a Safari tab; the Home Screen app does that
+  if (!L.dev) return;
   if (syncing) { again = true; return; }
   syncing = true;
   try {
-    const body = { role: 'phone', doc: L.doc, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, sub: L.sub || null };
+    const body = { role: 'phone', doc: L.doc, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, sub: L.sub || null, name: devName() };
     if (L.dev) { body.pid = L.dev.pid; body.key = L.dev.key; }
     const r = await fetch(WORKER + '/p/sync', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    if (r.status === 401 && L.dev) { L.moved = true; persist(); render(); return; }
+    if (r.status === 401) { signedOut('You were signed out on this device.'); return; }
     if (!r.ok) return;
     const j = await r.json();
-    if (j.pid) L.dev = { pid: j.pid, key: j.key };
     L.doc = C.merge(L.doc, j.doc); L.meta = j.meta; L.synced = Date.now(); persist();
     if (j.resub) await resubscribe();
     if (!U.sheetOpen() && !busy()) render();
@@ -66,23 +66,45 @@ async function sync() {
 }
 async function api(path, body) {
   const r = await fetch(WORKER + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'failed'); return j;
+  const j = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(j.error || 'failed'); e.status = r.status; e.minutes = j.minutes; throw e; } return j;
 }
 
-/* ---------- gift links (#gift=CODE) and codes ---------- */
-const giftCode = ((location.hash.match(/gift=([A-Za-z0-9-]+)/) || [])[1] || '').toUpperCase();
-async function claimCode(code, isGift) {
+/* ---------- sign in / sign out ---------- */
+const devName = () => /iPad/.test(navigator.userAgent) ? 'iPad' : /iPhone/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android' : 'Computer';
+let loginMsg = '';
+async function signIn(user, pin) {
   try {
-    const j = await api('/p/claim', { code });
-    if (j.role !== 'phone') { say('Wrong code', 'That code is for the back office page, not for this app.', '🔑'); return false; }
-    L.dev = { pid: j.pid, key: j.key }; L.doc = C.merge(C.newDoc(), j.doc); L.meta = j.meta; L.moved = false; delete L.pendingGift;
-    if (isGift) { L.set.guided = false; gs = 0; }
-    persist(); history.replaceState(null, '', location.pathname); await sync(); render();
-    toast(isGift ? 'Your gift is ready 🎁' : 'Your data is back 🎉'); return true;
+    const j = await api('/auth/login', { user, pin });
+    L.dev = { pid: j.pid, key: j.key }; L.doc = C.merge(C.newDoc(), j.doc); L.meta = j.meta; L.moved = false; L.user = j.meta.user;
+    if (L.doc.cfg.model) L.set.model = L.doc.cfg.model;
+    persist(); loginMsg = ''; sfx.win(); render(); window.scrollTo(0, 0);
+    if (Notification && Notification.permission === 'granted') checkPush(); else sync();
+    toast(`Welcome${L.doc.cfg.name ? ', ' + L.doc.cfg.name : ''} 💖`);
   } catch (e) {
-    if (isGift && L.dev && (L.doc.cfg.gift || C.medList(L.doc).length)) { history.replaceState(null, '', location.pathname); return false; } // already opened before
-    say(isGift ? 'This gift link was already used' : 'That code did not work', isGift ? 'Ask for a new link, or just continue. You can add your medicines yourself.' : 'Codes work once and expire. Ask for a new one.', '🔑'); return false;
+    say(e.status === 429 ? 'Too many tries' : 'That didn\'t work', e.status === 429 ? `Wait ${e.minutes || 15} minutes, then try again.` : 'Check your username and 6-digit PIN. Ask your helper if you forgot them.', e.status === 429 ? '⏳' : '🔑');
   }
+}
+async function signOut() {
+  if (!(await ask({ icon: '👋', title: 'Sign out?', text: 'Reminders stop on this device. Your data stays safe in your account.', ok: 'Sign out', danger: true }))) return;
+  try { await api('/auth/logout', { pid: L.dev.pid, key: L.dev.key, role: 'phone' }); } catch (e) {}
+  try { const reg = await navigator.serviceWorker.ready, s = await reg.pushManager.getSubscription(); if (s) await s.unsubscribe(); } catch (e) {}
+  signedOut('');
+}
+function signedOut(msg) { L = { doc: C.newDoc(), dev: null, set: L.set, sub: null }; loginMsg = msg; persist(); tab = 'today'; U.closeSheet(); render(); }
+function viewLogin() {
+  return `<div class="guide"><div class="gbody"><div class="gicon">💊</div><h1>Sign in to BlovMed</h1><p class="lead">Use the username and PIN you were given.</p>
+   ${loginMsg ? `<div class="alert"><i>ℹ️</i><span>${esc(loginMsg)}</span></div>` : ''}
+   <label>Username</label><input type="text" id="li_user" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. bob">
+   <label>6-digit PIN</label><input type="password" id="li_pin" class="pinput" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="current-password" placeholder="••••••">
+   <button class="btn full big" style="margin-top:16px" data-a="signin">Sign in</button>
+   <p class="mini" style="text-align:center;margin-top:12px">You stay signed in until you sign out. Use the same sign-in on all your devices.</p></div></div>`;
+}
+function pinSheet() {
+  U.openSheet(`<h1 style="margin-top:0">🔑 Change PIN</h1><p class="sub">Pick 6 digits you'll remember. Not your birthday.</p>
+   <label>Current PIN</label><input type="password" id="pn_old" class="pinput" inputmode="numeric" maxlength="6">
+   <label>New PIN</label><input type="password" id="pn_new" class="pinput" inputmode="numeric" maxlength="6">
+   <label>New PIN again</label><input type="password" id="pn_new2" class="pinput" inputmode="numeric" maxlength="6">
+   <button class="btn full big" style="margin-top:14px" data-a="pinsave">Save new PIN</button>`);
 }
 
 /* ---------- push reminders, with a health check every time the app opens ---------- */
@@ -125,6 +147,8 @@ function actx() { if (!L.set.sound) return null; try { AC = AC || new (window.Au
 function tone(f, t0, d, type, v) { const a = actx(); if (!a) return; const o = a.createOscillator(), g = a.createGain(), n = a.currentTime + t0; o.type = type || 'sine'; o.frequency.value = f; g.gain.setValueAtTime(.0001, n); g.gain.linearRampToValueAtTime(v || .15, n + .02); g.gain.exponentialRampToValueAtTime(.0001, n + d); o.connect(g); g.connect(a.destination); o.start(n); o.stop(n + d + .05); }
 function vroom() { const a = actx(); if (!a) return; const o = a.createOscillator(), g = a.createGain(), n = a.currentTime; o.type = 'sawtooth'; o.frequency.setValueAtTime(70, n); o.frequency.exponentialRampToValueAtTime(260, n + .35); o.frequency.exponentialRampToValueAtTime(140, n + .45); o.frequency.exponentialRampToValueAtTime(380, n + .9); g.gain.setValueAtTime(.06, n); g.gain.exponentialRampToValueAtTime(.0001, n + 1); o.connect(g); g.connect(a.destination); o.start(n); o.stop(n + 1.05); }
 function screech(at) { const a = actx(); if (!a) return; const len = .75, buf = a.createBuffer(1, a.sampleRate * len, a.sampleRate), d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; const s = a.createBufferSource(); s.buffer = buf; const f = a.createBiquadFilter(), g = a.createGain(), n = a.currentTime + at; f.type = 'bandpass'; f.Q.value = 14; f.frequency.setValueAtTime(2300, n); f.frequency.linearRampToValueAtTime(3100, n + .3); f.frequency.linearRampToValueAtTime(2500, n + len); g.gain.setValueAtTime(.0001, n); g.gain.linearRampToValueAtTime(.13, n + .05); g.gain.exponentialRampToValueAtTime(.0001, n + len); s.connect(f); f.connect(g); g.connect(a.destination); s.start(n); s.stop(n + len); }
+function shipHorn(at) { const a = actx(); if (!a) return; [98, 147].forEach(f => { const o = a.createOscillator(), g = a.createGain(), n = a.currentTime + at; o.type = 'sawtooth'; o.frequency.value = f; g.gain.setValueAtTime(.0001, n); g.gain.linearRampToValueAtTime(.06, n + .08); g.gain.setValueAtTime(.06, n + .7); g.gain.exponentialRampToValueAtTime(.0001, n + 1); o.connect(g); g.connect(a.destination); o.start(n); o.stop(n + 1.05); }); }
+function splash(at) { const a = actx(); if (!a) return; const len = .9, buf = a.createBuffer(1, a.sampleRate * len, a.sampleRate), d = buf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; const s = a.createBufferSource(); s.buffer = buf; const f = a.createBiquadFilter(), g = a.createGain(), n = a.currentTime + at; f.type = 'lowpass'; f.frequency.value = 900; g.gain.setValueAtTime(.0001, n); g.gain.linearRampToValueAtTime(.12, n + .15); g.gain.exponentialRampToValueAtTime(.0001, n + len); s.connect(f); f.connect(g); g.connect(a.destination); s.start(n); s.stop(n + len); }
 const sfx = { take() { [523, 659, 784].forEach((f, i) => tone(f, i * .09, .25)); }, undo() { tone(300, 0, .15, 'triangle'); }, win() { [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, i * .1, .35, 'square', .07)); }, honk() { tone(440, 0, .12, 'square', .08); tone(440, .18, .16, 'square', .08); }, tick() { tone(880, 0, .08, 'sine', .08); } };
 function buzz(p) {
   if (!L.set.haptics) return;
@@ -140,19 +164,34 @@ function pop(t) { const d = document.createElement('div'); d.className = 'pop'; 
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let animUntil = 0, heroLock = 0;
 const busy = () => Date.now() < animUntil || Date.now() < heroLock;
-const carX = p => { const sc = $('.scene'); return sc ? 8 + (sc.clientWidth - 130) * p : 0; };
+const carX = p => { const sc = $('.scene'), c = $('.car'); return sc ? 8 + (sc.clientWidth - (c ? c.offsetWidth : 96) - 34) * p : 0; };
 const prog = () => { const ds = C.dosesOn(L.doc, today().ymd); return ds.length ? ds.filter(d => d.at).length / ds.length : 0; };
-const carSVG = () => carById(L.set.model).draw(COLORS[L.set.car] || COLORS[0]);
+const vehId = () => (L.doc && L.doc.cfg.model) || L.set.model || 'bubble';
+const vehCol = () => { const c = L.doc && L.doc.cfg.color; return c >= 0 ? c : (L.set.car || 0); };
+const veh = () => carById(vehId());
+const isShip = () => veh().kind === 'ship';
+const carSVG = () => veh().draw(COLORS[vehCol()] || COLORS[0]);
+function sceneHtml() {
+  if (!L.set.game) return '';
+  const ship = isShip();
+  return `<div class="scene ${ship ? 'sea' : ''}" data-a="car" aria-label="Tap to honk">${ship ? '<div class="water"></div>' : '<div class="road"></div>'}<div class="lines"></div><span class="speedo" style="opacity:0"></span><div class="flag">${ship ? '🏝️' : '🏁'}</div><div class="car idle">${carSVG()}</div></div>`;
+}
 function placeCar() { const c = $('.car'); if (c && !busy()) c.style.transform = `translateX(${carX(prog())}px)`; }
 function carPos() { const sc = $('.scene'), c = $('.car'); return c.getBoundingClientRect().left - sc.getBoundingClientRect().left; }
 function puff(x) { const sc = $('.scene'); if (!sc) return; const d = document.createElement('div'); d.className = 'smoke'; d.style.left = (x - 6 + Math.random() * 10) + 'px'; d.style.bottom = (18 + Math.random() * 8) + 'px'; sc.appendChild(d); setTimeout(() => d.remove(), 950); }
-function speedo(peak, ms) { const el = $('.speedo'); if (!el) return; const t0 = performance.now(); const f = now => { const k = Math.min(1, (now - t0) / ms), v = Math.round(peak * Math.sin(Math.PI * k)); el.textContent = v + ' km/h'; el.style.opacity = k < 1 ? 1 : 0; if (k < 1) requestAnimationFrame(f); }; requestAnimationFrame(f); }
+function speedo(peak, ms) { const el = $('.speedo'); if (!el) return; const t0 = performance.now(); const f = now => { const k = Math.min(1, (now - t0) / ms), v = Math.round(peak * Math.sin(Math.PI * k)); el.textContent = v + (isShip() ? ' knots' : ' km/h'); el.style.opacity = k < 1 ? 1 : 0; if (k < 1) requestAnimationFrame(f); }; requestAnimationFrame(f); }
 function drive(p0, p1, win) {
   const sc = $('.scene'), car = $('.car'); if (!sc || !car) return;
   const x0 = carX(p0), x1 = carX(p1), over = Math.max(10, Math.min(46, sc.clientWidth - 100 - x1)), dur = reduce ? 400 : 1600;
   animUntil = Date.now() + dur + (win ? 1500 : 200);
-  car.classList.remove('idle'); sc.classList.add('fast'); speedo(win ? 180 : 120, dur);
-  const a = car.animate([
+  car.classList.remove('idle'); sc.classList.add('fast'); speedo(isShip() ? (win ? 34 : 27) : (win ? 180 : 120), dur);
+  const ship = isShip();
+  const a = car.animate(ship ? [
+    { transform: `translateX(${x0}px) rotate(0deg)`, offset: 0 },
+    { transform: `translateX(${x0 - 4}px) rotate(-3deg)`, offset: .15 },
+    { transform: `translateX(${x1 + over}px) rotate(-1deg) translateY(-2px)`, offset: .55 },
+    { transform: `translateX(${x1 + over * .5}px) rotate(4deg)`, offset: .75 },
+    { transform: `translateX(${x1}px) rotate(0deg)`, offset: 1 }] : [
     { transform: `translateX(${x0}px) rotate(0deg)`, offset: 0 },
     { transform: `translateX(${x0 - 8}px) rotate(-5deg)`, offset: .12 },                 // launch: nose lifts
     { transform: `translateX(${x1 + over}px) rotate(-2deg)`, offset: .5 },               // full speed
@@ -164,16 +203,22 @@ function drive(p0, p1, win) {
     const sk = document.createElement('div'); sk.className = 'skid'; sk.style.left = (x1 - 10) + 'px'; sk.style.width = (over + 70) + 'px'; sc.appendChild(sk); setTimeout(() => sk.remove(), 1900);
     for (let i = 0; i < 12; i++) setTimeout(() => { if ($('.car')) puff(carPos() + (i % 2 ? 4 : 70)); }, 650 + i * 70);
   }
-  vroom(); screech(.95);
+  if (ship) { shipHorn(0); splash(.2); } else { vroom(); screech(.95); }
   a.onfinish = () => {
     sc.classList.remove('fast'); if (!win) { car.classList.add('idle'); return; }
+    if (ship) {
+      shipHorn(0); shipHorn(.9);
+      car.animate([{ transform: `translateX(${x1}px)` }, { transform: `translateX(${x1}px) translateY(-6px) rotate(-3deg)` }, { transform: `translateX(${x1}px) translateY(2px) rotate(2deg)` }, { transform: `translateX(${x1}px)` }], { duration: 1300 }).onfinish = () => car.classList.add('idle');
+      for (let i = 0; i < 12; i++) { const b = document.createElement('div'); b.className = 'boom'; b.textContent = ['🎆', '✨', '🏆', '💖'][i % 4]; b.style.left = (x1 + 50) + 'px'; b.style.bottom = '50px'; b.style.setProperty('--dx', (Math.random() * 180 - 90) + 'px'); b.style.setProperty('--dy', (-30 - Math.random() * 60) + 'px'); b.style.setProperty('--r', '0deg'); sc.appendChild(b); setTimeout(() => b.remove(), 1150); }
+      return;
+    }
     const d = car.animate([{ transform: `translateX(${x1}px) rotate(0deg)` }, { transform: `translateX(${x1}px) rotate(720deg)` }], { duration: reduce ? 300 : 1300, easing: 'cubic-bezier(.4,0,.2,1)' });
     screech(0); for (let i = 0; i < 14; i++) setTimeout(() => puff(x1 + 20 + Math.random() * 60), i * 80);
     for (let i = 0; i < 10; i++) { const b = document.createElement('div'); b.className = 'boom'; b.textContent = ['🎉', '✨', '🏆', '💖'][i % 4]; b.style.left = (x1 + 40) + 'px'; b.style.bottom = '50px'; b.style.setProperty('--dx', (Math.random() * 160 - 80) + 'px'); b.style.setProperty('--dy', (-30 - Math.random() * 60) + 'px'); b.style.setProperty('--r', (Math.random() * 90 - 45) + 'deg'); sc.appendChild(b); setTimeout(() => b.remove(), 1150); }
     d.onfinish = () => car.classList.add('idle');
   };
 }
-function honk() { const sc = $('.scene'), car = $('.car'); if (!sc || !car || busy()) return; sfx.honk(); buzz(30); const x = carPos(); car.animate([{ transform: `translateX(${x}px)` }, { transform: `translateX(${x}px) translateY(-10px)` }, { transform: `translateX(${x}px)` }], { duration: 350 }); const h = document.createElement('div'); h.className = 'honk'; h.textContent = 'Beep beep!'; h.style.left = (x + 50) + 'px'; sc.appendChild(h); setTimeout(() => h.remove(), 900); }
+function honk() { const sc = $('.scene'), car = $('.car'); if (!sc || !car || busy()) return; if (isShip()) shipHorn(0); else sfx.honk(); buzz(30); const x = carPos(); car.animate([{ transform: `translateX(${x}px)` }, { transform: `translateX(${x}px) translateY(-10px)` }, { transform: `translateX(${x}px)` }], { duration: 350 }); const h = document.createElement('div'); h.className = 'honk'; h.textContent = isShip() ? 'Hoooonk!' : 'Beep beep!'; h.style.left = (x + 50) + 'px'; sc.appendChild(h); setTimeout(() => h.remove(), 900); }
 
 /* ---------- taking doses ---------- */
 const now = () => Date.now();
@@ -221,7 +266,7 @@ function prnHtml() {
 }
 function viewToday() {
   const D = L.doc, n = today(), ds = C.dosesOn(D, n.ymd), st = C.stats(D, n.ymd), name = D.cfg.name, set = L.set;
-  if (!C.medList(D).length) return `<h1>Hi${name ? ' ' + esc(name) : ''} 💖</h1><p class="sub">Let's add your first medicine. It takes under a minute.</p>${set.game ? `<div class="scene" data-a="car"><div class="road"></div><div class="lines"></div><span class="speedo" style="opacity:0"></span><div class="flag">🏁</div><div class="car idle">${carSVG()}</div></div>` : ''}<button class="btn full big" data-a="new">+ Add my first medicine</button>${pushBanner()}`;
+  if (!C.medList(D).length) return `<h1>Hi${name ? ' ' + esc(name) : ''} 💖</h1><p class="sub">Let's add your first medicine. It takes under a minute.</p>${sceneHtml()}<button class="btn full big" data-a="new">+ Add my first medicine</button>${pushBanner()}`;
   const all = [...lastNight(n), ...ds], done = ds.filter(d => d.at).length;
   const act = all.find(d => !d.at && status(d, n) !== 'upcoming'), nxt = all.find(d => !d.at);
   let hero;
@@ -236,16 +281,24 @@ function viewToday() {
      <button data-a="tk" data-k="${d.key}">${act ? 'I took it ✓' : 'I took it early'}</button>
      ${act ? `<div class="two" style="margin-top:8px"><button class="ghost" data-a="snz" data-k="${d.key}">⏰ 10 min</button><button class="ghost" data-a="dd" data-k="${d.key}">Details</button></div>` : `<button class="ghost" style="margin-top:8px" data-a="dd" data-k="${d.key}">Details</button>`}</div>`;
   }
-  const scene = set.game ? `<div class="scene" data-a="car" aria-label="Your car. Tap to honk."><div class="road"></div><div class="lines"></div><span class="speedo" style="opacity:0">0 km/h</span><div class="flag">🏁</div><div class="car idle">${carSVG()}</div></div>` : '';
+  const scene = sceneHtml();
   return `<h1>${name ? 'Hi ' + esc(name) + ' 👋' : 'Today'}</h1>
-  <div class="chips"><button data-a="howto">⭐ ${st.pts}</button><button data-a="howto">🔥 ${st.streak}</button><button data-a="howto">Lv ${st.lvl} · ${st.title}</button>${set.game ? '<button data-a="garage" aria-label="Garage">🚗</button>' : ''}</div>
-  <button class="lvl" data-a="howto" style="display:block;width:100%;border:0;padding:0" aria-label="Level progress"><b style="width:${Math.round(st.into / C.PER_LEVEL * 100)}%"></b></button>
-  ${scene}${hero}${streakHint(st)}${pushBanner()}${movedBanner()}${shopCard(n)}${prnHtml()}
+  <div class="chips"><button data-a="stars">⭐ ${st.pts}</button><button data-a="streak">🔥 ${st.streak}</button><button data-a="level">Lv ${st.lvl} · ${st.title}</button>${set.game ? '<button data-a="garage" aria-label="Garage">🚗</button>' : ''}</div>
+   <button class="lvl" data-a="level" style="display:block;width:100%;border:0;padding:0" aria-label="Level progress"><b style="width:${Math.round(st.into / C.PER_LEVEL * 100)}%"></b></button>
+  ${scene}${hero}${streakHint(st)}${pushBanner()}${buyLink(n)}${activeSick()}${prnHtml()}
   ${all.length ? '<h2>Today\'s doses</h2>' : ''}${all.map(d => { const s = status(d, n); return `<button class="dose ${s}" data-a="dd" data-k="${d.key}"><span class="t">${C.fmtT(d.t)}</span><span class="n">${esc(d.m.name)}<span>${d.at ? 'Taken ' + U.tm(d.at) : pl(d.m.perDose, 'pill') + (d.m.notes ? ' · ' + esc(d.m.notes) : '')}</span>${d.d < n.ymd ? '<em>From last night</em>' : ''}</span><span class="c">✓</span></button>`; }).join('')}`;
 }
 function streakHint(st) {
   if (!st.todayTotal || !st.left || now() < heroLock) return '';
   return `<p class="mini" style="margin:-6px 0 10px;text-align:center">${st.left === 1 ? 'One more dose today' : st.left + ' more doses today'} to ${st.streak ? 'keep your 🔥 ' + st.streak + '-day streak' : 'start a 🔥 streak'} and earn +20 ⭐</p>`;
+}
+function buyLink(n) {
+  const D = L.doc, p = C.plan(D, n.ymd), cnt = p.rows.filter(r => r.dl.days <= D.cfg.lowDays).length + C.live(D.shop).filter(s => !s.done).length;
+  return cnt ? `<button class="alert" data-a="tab" data-k="buy"><i>🛒</i><span>${pl(cnt, 'thing')} to buy<small>Tap to see your buy list.</small></span></button>` : '';
+}
+function activeSick() {
+  const open = C.live(L.doc.sick).filter(s => s.open === true);
+  return open.map(s => { const y = U.symOf(s); return `<button class="alert bad" data-a="sickopen" data-id="${s.id}"><i>${y.e}</i><span>How's your ${esc((s.name || y.n).toLowerCase())}?<small>Tap to update your sick log.</small></span></button>`; }).join('');
 }
 function movedBanner() { return L.moved ? `<button class="alert bad" data-a="reconnect"><i>⚠️</i><span>This phone is no longer linked<small>BlovMed was moved to another phone or reset. Tap to reconnect this phone (your data stays).</small></span></button>` : ''; }
 function doseSheet(key) {
@@ -325,21 +378,73 @@ function buyList(k) {
   return items;
 }
 function viewSick() {
-  const D = L.doc, helper = D.cfg.helper, linked = L.meta && L.meta.admins > 0;
+  const D = L.doc, helper = D.cfg.helper || 'your helper';
   const note = `<p class="mini" style="margin-top:14px">ℹ️ A general guide for healthy adults, not a diagnosis. You take regular medicines, so check with a pharmacist or your doctor before buying anything new.</p>`;
-  if (!sx) return `<h1>I don't feel well 🤒</h1><p class="sub">Tap what you feel.</p><div class="symgrid">${Object.entries(U.SYM).map(([k, x]) => `<button data-a="sx" data-k="${k}"><i>${x.e}</i>${x.n}</button>`).join('')}</div>${note}`;
+  const all = C.live(D.sick).sort((a, b) => b.t - a.t), open = all.filter(s => s.open === true);
+  if (!sx) return `<h1>I don't feel well 🤒</h1>
+   ${open.length ? `<h2>Right now</h2>${open.map(s => U.sickCard(D, s)).join('')}` : ''}
+   <h2>${open.length ? 'Something else?' : 'What do you feel?'}</h2><div class="symgrid">${Object.entries(U.SYM).map(([k, x]) => `<button data-a="sx" data-k="${k}"><i>${x.e}</i>${x.n}</button>`).join('')}<button data-a="logother"><i>✍️</i>Something else</button></div>
+   <h2>📖 Logbook</h2>${all.filter(s => s.open !== true).slice(0, logMore ? 100 : 5).map(s => U.sickCard(D, s, true)).join('') || `<p class="mini">${all.length ? 'When something is over, it moves here.' : 'Nothing logged yet. When you log how you feel, it shows up here, and ' + esc(helper) + ' can see it too.'}</p>`}
+   ${all.filter(s => s.open !== true).length > 5 && !logMore ? '<button class="link" data-a="logmore">Show all</button>' : ''}${note}`;
   const x = U.SYM[sx], li = a => a.map(i => `<li>${i}</li>`).join(''), items = buyList(sx);
-  const recent = C.live(D.sick).find(s => s.sym === sx && now() - s.t < 2 * 36e5);
-  const open = new Set(C.live(D.shop).filter(s => !s.done).map(s => s.text));
+  const cur = open.find(s => s.sym === sx);
+  const openTxt = new Set(C.live(D.shop).filter(s => !s.done).map(s => s.text));
   return `<button class="back" data-a="sback">← Back</button><h1>${x.e} ${x.n}</h1>
-  ${recent ? `<div class="alert ok"><i>✅</i><span>Logged ${U.ago(recent.t)}${linked ? `. ${esc(helper || 'Your helper')} can see it.` : '.'} Feel better soon 💖</span></div>` : `<button class="btn full" data-a="feel">I feel this now</button><p class="mini" style="margin:6px 0 0;text-align:center">${linked ? `Logs it and lets ${esc(helper || 'your helper')} know.` : 'Logs it so you can see how often it happens.'}</p>`}
-  <div class="card" style="border-color:var(--bad);margin-top:14px;font-size:15px"><b style="color:var(--bad)">🚑 See a doctor if</b><ul>${li(x.dr)}</ul></div>
+  ${cur ? U.sickCard(D, cur) : `<button class="btn full big" data-a="logsick" data-k="${sx}">📝 Log it</button><p class="mini" style="margin:6px 0 0;text-align:center">Saves it to your logbook and lets ${esc(helper)} know, so they can help.</p>`}
+  <div class="card" style="border-color:var(--bad);margin-top:14px;font-size:15px"><b style="color:var(--bad)">🚑 See a doctor if</b><ul>${li(x.dr)}</ul>${D.prof && D.prof.emphone ? `<p class="mini" style="margin:6px 0 0">Emergency contact: <a href="tel:${esc(D.prof.emphone.replace(/[^\d+]/g, ''))}" style="color:var(--acc);font-weight:700">${esc(D.prof.emname || '')} ${esc(D.prof.emphone)}</a></p>` : ''}</div>
   ${usualHtml(sx)}
-  ${items.length ? `<h2>🛒 What to buy</h2><div class="card">${items.map(i => { const inList = open.has(i.text), on = inList || (pick[i.k] ?? !i.have); return `<button class="check ${on ? 'on' : ''}" data-a="pk" data-k="${esc(i.k)}" ${inList ? 'disabled' : ''}><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${KIND[i.kind]} ${esc(i.text)}<small>${inList ? 'Already on your list' : i.sub}</small></span></button>`; }).join('')}
-   <button class="btn full" style="margin-top:12px" data-a="addshop">Add to my shopping list</button><p class="mini" style="margin:8px 0 0">I'll remind you in 1 hour and at ${C.fmtT(C.pad(D.cfg.shopHour) + ':00')} until you tick them off.</p></div>` : ''}
+  ${items.length ? `<h2>🛒 What to buy</h2><div class="card">${items.map(i => { const inList = openTxt.has(i.text), on = inList || (pick[i.k] ?? !i.have); return `<button class="check ${on ? 'on' : ''}" data-a="pk" data-k="${esc(i.k)}" ${inList ? 'disabled' : ''}><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${KIND[i.kind]} ${esc(i.text)}<small>${inList ? 'Already on your buy list' : i.sub}</small></span></button>`; }).join('')}
+   <button class="btn full" style="margin-top:12px" data-a="addshop">Add to my buy list</button></div>` : ''}
   <details class="sec card"><summary><b>💊 Medicines that can help</b></summary><div>${x.m.length ? x.m.map(medCard).join('') : '<p class="mini">No over-the-counter medicine suggested here. Ask a pharmacist if you need something.</p>'}</div></details>
   <details class="sec card"><summary><b>🍲 Eat and do</b></summary><div><ul>${li(x.eat)}</ul></div></details>
   <details class="sec card"><summary><b>🚫 Avoid</b></summary><div><ul>${li(x.avoid)}</ul></div></details>${note}`;
+}
+let logMore = false, LS = null;
+function logSheet(k) {
+  const D = L.doc, x = k ? U.SYM[k] : null, meds = C.medList(D).filter(m => m.prn || (k ? usualIds(k) : []).includes(m.id));
+  LS = { k, sev: 0, took: {} };
+  U.openSheet(`<h1 style="margin-top:0">${x ? x.e + ' ' + x.n : '✍️ How do you feel?'}</h1>
+   ${x ? '' : '<label>What is it?</label><input type="text" id="ls_name" placeholder="e.g. Back pain, rash, chills">'}
+   <label>How bad is it?</label><div class="opt" id="ls_sev">${[1, 2, 3].map(v => `<button data-a="lssev" data-v="${v}">${U.SEVE[v]} ${U.SEV[v]}</button>`).join('')}</div>
+   <label>Anything to add? <span class="mini">(optional)</span></label><textarea id="ls_note" rows="2" placeholder="e.g. Started after lunch, a bit dizzy too"></textarea>
+   ${meds.length ? `<label>Did you take something for it?</label><div class="card" style="margin:0">${meds.map(m => `<button class="check" data-a="lstook" data-id="${m.id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(m.name)}<small>${m.perDose} now</small></span></button>`).join('')}</div>` : ''}
+   <button class="btn full big" style="margin-top:16px" data-a="lssave">Save to logbook</button>`);
+}
+
+/* ---------- stars, streak, level: each with its own details ---------- */
+function starsSheet() {
+  const D = L.doc, n = today().ymd, st = C.stats(D, n), ern = C.earnings(D, n, 12);
+  const todayPts = ern.filter(e => U.today().ymd === C.localNow(undefined, e.t).ymd).reduce((x, e) => x + e.pts, 0);
+  const wk = ern.filter(e => now() - e.t < 7 * 864e5).reduce((x, e) => x + e.pts, 0);
+  U.openSheet(`<h1 style="margin-top:0">⭐ Your stars</h1><div class="bigstat">${st.pts}</div><p>stars in total</p>
+   <div class="two"><div class="card" style="text-align:center"><b style="font-size:22px">+${todayPts}</b><br><span class="mini">today</span></div><div class="card" style="text-align:center"><b style="font-size:22px">+${wk}</b><br><span class="mini">last 7 days</span></div></div>
+   <div class="card"><b>How to earn</b><div class="howrow"><i>💊</i><span><b>+10</b> for every dose you log</span></div><div class="howrow"><i>🏁</i><span><b>+20</b> when every dose of the day is done</span></div>
+   ${st.left ? `<p class="mini" style="margin:8px 0 0">Today you can still earn <b>+${st.left * 10 + 20}</b> ⭐ (${pl(st.left, 'dose')} left).</p>` : ''}</div>
+   <div class="card"><b>Recently earned</b>${ern.map(e => `<div class="row mini"><span>${e.pts === 20 ? '🏁' : '💊'} ${esc(e.what)}</span><span>+${e.pts} · ${U.fmtDT(e.t)}</span></div>`).join('') || '<p class="mini">Log your first dose to earn stars.</p>'}</div>`);
+}
+function streakSheet() {
+  const D = L.doc, n = today().ymd, st = C.stats(D, n), best = C.bestStreak(D, n), ds = C.days(D, n, 28);
+  const pad = (C.wday(ds[0].d) + 6) % 7, msg = st.left ? (st.streak ? `Take ${pl(st.left, 'more dose')} today to make it ${st.streak + 1} 🔥` : `Take ${st.left === st.todayTotal ? 'all ' + pl(st.left, 'dose') : pl(st.left, 'more dose')} today to start a streak 🔥`) : st.todayTotal ? 'Today is done. Your streak is safe 🔥' : 'Rest day today. Your streak is safe 😴';
+  U.openSheet(`<h1 style="margin-top:0">🔥 Your streak</h1><div class="bigstat">${st.streak}</div><p>${st.streak === 1 ? 'day' : 'days'} in a row · best ever: ${best}</p>
+   <div class="alert ${st.left ? '' : 'ok'}"><i>${st.left ? '🎯' : '✅'}</i><span>${msg}</span></div>
+   <div class="card"><b>Last 4 weeks</b><div class="cal">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map(d => `<b>${d}</b>`).join('')}${'<span></span>'.repeat(pad)}${ds.map(x => `<i class="${x.st}${x.d === n ? ' today' : ''}" title="${x.d}">${+x.d.slice(8)}</i>`).join('')}</div>
+   <div class="legend"><span style="--c:var(--ok)">All taken</span><span style="--c:var(--warnbg)">Some</span><span style="--c:var(--badbg)">Missed</span><span style="--c:var(--line)">No doses</span></div></div>
+   <div class="card"><b>Streak rules</b><div class="howrow"><i>✅</i><span>Take every dose of the day to add 1 day</span></div><div class="howrow"><i>⏰</i><span>Late is fine. It still counts if you log it</span></div><div class="howrow"><i>😴</i><span>Days with no doses don't break it</span></div><div class="howrow"><i>💔</i><span>A day with a missed dose starts it over</span></div></div>`);
+}
+function levelSheet() {
+  const st = C.stats(L.doc, today().ymd), idx = C.TITLES.indexOf(st.title);
+  U.openSheet(`<h1 style="margin-top:0">🏆 Your level</h1><div class="bigstat">Lv ${st.lvl}</div><p>${st.title}</p>
+   <div class="card"><div class="row"><b>Next: Lv ${st.lvl + 1}</b><span class="mini">${st.toNext} ⭐ to go</span></div><div class="lvl" style="margin:8px 0 0"><b style="width:${Math.round(st.into / C.PER_LEVEL * 100)}%"></b></div>
+   <p class="mini" style="margin:6px 0 0">${st.into} of ${C.PER_LEVEL} ⭐ · about ${Math.ceil(st.toNext / 10)} doses</p></div>
+   <div class="card"><b>Driver titles</b>${C.TITLES.map((t, i) => `<div class="howrow"><i>${i < idx ? '✅' : i === idx ? '👉' : '🔒'}</i><span><b>${t}</b><small>Level ${i * 2 + 1}${i === C.TITLES.length - 1 ? '+' : '–' + (i * 2 + 2)}${i > idx ? ' · ' + ((i * 2) * C.PER_LEVEL - st.pts) + ' ⭐ away' : ''}</small></span></div>`).join('')}</div>`);
+}
+
+/* ---------- Me: profile and settings ---------- */
+let meSeg = 'profile', prevTab = 'today';
+function viewMe() {
+  return `<button class="back" data-a="meback">← Back</button>
+   <div class="seg"><button class="${meSeg === 'profile' ? 'on' : ''}" data-a="meseg" data-k="profile">👤 Profile</button><button class="${meSeg === 'set' ? 'on' : ''}" data-a="meseg" data-k="set">⚙️ Settings</button></div>
+   ${meSeg === 'profile' ? U.profileHtml(L.doc, false) : viewSettings()}`;
 }
 
 /* ---------- welcome guide (first open) ---------- */
@@ -356,8 +461,9 @@ function howHtml() {
   <p class="mini">💡 Late is okay. A late dose still counts and keeps your streak. Only a missed one breaks it.</p>`;
 }
 function garageHtml() {
-  return `<div class="garage">${CAR_MODELS.map(m => `<button class="${L.set.model === m.id ? 'on' : ''}" data-a="model" data-v="${m.id}">${m.draw(COLORS[L.set.car] || COLORS[0])}<b>${m.name}</b><span>${m.type}</span></button>`).join('')}</div>
-  <label>Color</label><div class="opt">${COLORS.map((c, i) => `<button class="sw ${L.set.car === i ? 'on' : ''}" style="background:${c}" aria-label="${COLOR_NAMES[i]}" data-a="color" data-v="${i}"></button>`).join('')}</div>`;
+  const cur = vehId(), col = vehCol();
+  return GROUPS.map(([g, label]) => `<div class="gh">${label}</div><div class="garage ${g === 'ships' ? 'ships' : ''}">${CAR_MODELS.filter(m => m.group === g).map(m => `<button class="${cur === m.id ? 'on' : ''}" data-a="model" data-v="${m.id}">${m.draw(COLORS[col] || COLORS[0])}<b>${m.name}</b><span>${m.type}</span></button>`).join('')}</div>`).join('')
+  + `<div class="gh">🎨 Color${isShip() ? ' (flag and stripe)' : ''}</div><div class="opt">${COLORS.map((c, i) => `<button class="sw ${col === i ? 'on' : ''}" style="background:${c}" aria-label="${COLOR_NAMES[i]}" data-a="color" data-v="${i}"></button>`).join('')}</div>`;
 }
 const garageSheet = () => U.openSheet(`<h1 style="margin-top:0">🚗 Garage</h1><p class="sub">Pick your ride. Change it any time.</p>${garageHtml()}<button class="btn full" style="margin-top:16px" data-a="close">Done</button>`);
 const shareIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px"><path d="M12 3v12M7 8l5-5 5 5"/><rect x="4" y="11" width="16" height="10" rx="2"/></svg>';
@@ -371,7 +477,7 @@ function viewInstall() {
    <div class="step"><span class="n">2</span><span><b>Tap "Add to Home Screen" ➕</b><span>Scroll down a little if you don't see it.</span></span></div>
    <div class="step"><span class="n">3</span><span><b>Tap "Add"</b><span>Top right corner.</span></span></div>
    <div class="step"><span class="n">4</span><span><b>Open BlovMed from your Home Screen 💊</b><span>Then this tab can be closed.</span></span></div>
-   ${L.pendingGift ? `<div class="gift" style="text-align:center"><small>🎁 Your gift code</small><b style="font-size:24px;letter-spacing:3px">${esc(L.pendingGift)}</b><br><span class="mini">You'll paste this on the first screen of the app.</span><br><button class="btn" style="margin-top:8px" data-a="copycode">Copy code</button></div>` : ''}</div>
+</div>
    <button class="link" data-a="noinstall">I'll do it later</button></div>`;
 }
 function viewGuide() {
@@ -379,8 +485,7 @@ function viewGuide() {
   const body = [
     () => `<div class="gicon">💖</div><h1>Welcome${name ? ', ' + esc(name) : ''}!</h1><p class="lead">BlovMed reminds you to take your meds, plans what to buy, and makes it a little game.</p>
       ${D.cfg.gift ? `<div class="gift"><small>💌 A message from ${esc(helper || 'someone who cares about you')}</small>${esc(D.cfg.gift)}</div>` : ''}
-      <label>What should I call you?</label><input type="text" id="g_name" data-s="name" value="${esc(name)}" placeholder="Your name or nickname">
-      ${WORKER && !ms.length && !D.cfg.gift ? `<details class="sec card" style="margin-top:16px" ${L.pendingGift ? 'open' : ''}><summary><b>🎁 Got a gift code?</b></summary><div><p class="mini" style="margin-top:0">Paste it to load everything that was set up for you.</p><input type="text" id="g_code" placeholder="ABCD-EFGH" autocapitalize="characters" value="${esc(L.pendingGift || '')}"><button class="btn full" style="margin-top:8px" data-a="gclaim">Use code</button></div></details>` : ''}`,
+      <label>What should I call you?</label><input type="text" id="g_name" data-s="name" value="${esc(name)}" placeholder="Your name or nickname">`,
     () => `<div class="gicon">🗓️</div><h1>How it works</h1><p class="lead">Just 1 tap a dose.</p>
       <div class="step"><span class="e">🔔</span><span><b>I remind you</b><span>Even when the app is closed.</span></span></div>
       <div class="step"><span class="e">✅</span><span><b>Tap "I took it"</b><span>One big button. That's it.</span></span></div>
@@ -416,17 +521,15 @@ function viewSettings() {
   <details class="sec card"><summary><b>🎨 Look</b></summary><div><label>Pink style</label><div class="opt">${o('accent', [0, 1, 2, 3], ACCN)}</div>
   <label>Light or dark</label><div class="opt">${o('mode', ['auto', 'light', 'dark'], ['Auto', 'Light', 'Dark'])}</div><div style="margin-top:12px">${tog('big', 'Bigger text')}</div></div></details>
   <div class="card"><b>🏎️ Car game</b><div style="margin-top:8px">${tog('game', 'Show the car')}</div>
-  <button class="btn ghost full" style="margin-top:10px" data-a="garage">🚗 Garage: ${carById(st.model).name}</button>
-  <button class="btn ghost full" style="margin-top:8px" data-a="howto">⭐ How stars and streaks work</button></div>
+  <button class="btn ghost full" style="margin-top:10px" data-a="garage">🚗 Garage: ${veh().name}</button>
+  <div class="two" style="margin-top:8px"><button class="btn ghost" data-a="stars">⭐ Stars</button><button class="btn ghost" data-a="streak">🔥 Streak</button></div></div>
   <details class="sec card"><summary><b>🔊 Sound and feel</b></summary><div>${tog('sound', 'Sounds')}<div style="margin-top:8px">${tog('haptics', 'Vibration')}</div>
   <button class="btn ghost full" style="margin-top:12px" data-a="test">Test sound and vibration</button><p class="mini" style="margin:8px 0 0">Vibration works best on Android. On iPhone it depends on your iOS version.</p></div></details>
   <details class="sec card"><summary><b>💰 Money</b></summary><div><label style="margin-top:0">Payday dates</label><div class="two"><input type="number" min="1" max="31" data-s="pd1" value="${D.cfg.paydays[0]}"><input type="number" min="1" max="31" data-s="pd2" value="${D.cfg.paydays[1]}"></div>
   <label>Currency symbol</label><input type="text" maxlength="3" data-s="cur" value="${esc(D.cfg.cur)}"></div></details>
-  ${WORKER ? `<details class="sec card"><summary><b>🤝 Helper ${linked ? '· ' + esc(helper) : ''}</b></summary><div>
-   ${linked ? `<p style="margin:8px 0">Linked with <b>${esc(helper)}</b>. They can see your doses, medicines, money plan, sick reports and shopping list, and can edit your medicines.</p><button class="btn ghost full" data-a="code">Show a new link code</button><button class="btn red full" style="margin-top:8px" data-a="unlink">Unlink helper</button>`
-    : `<p style="margin:8px 0">Let someone you trust help manage your meds from their own phone. They'll see your doses and can update medicines and prices.</p><button class="btn full" data-a="code">Show link code</button>`}
-   <details><summary>Moving from another phone?</summary><p class="mini">Ask your helper for a code (Back office → Settings → Link a new phone), then type it here.</p><input type="text" id="joincode" placeholder="ABCD-EFGH" autocapitalize="characters"><button class="btn full" style="margin-top:8px" data-a="join">Restore my data</button></details>
-   <p class="mini" style="margin:10px 0 0">${L.synced ? 'Backed up ' + U.ago(L.synced) : 'Not backed up yet'}</p></div></details>` : ''}
+  <div class="card"><b>🔐 Account</b><p class="mini" style="margin:6px 0 10px">Signed in as <b>@${esc((L.meta && L.meta.user) || L.user || '')}</b>${L.synced ? ' · synced ' + U.ago(L.synced) : ''}. Use the same sign-in on all your devices.</p>
+   <div class="two"><button class="btn ghost" data-a="pin">🔑 Change PIN</button><button class="btn ghost" data-a="signout">👋 Sign out</button></div>
+   <p class="mini" style="margin:10px 0 0">🤝 ${esc(D.cfg.helper || 'Your helper')} can see your medicines, doses, profile, sick logbook and buy list, so they can help you.</p></div>
   <details class="sec card"><summary><b>✨ More</b></summary><div>
    ${installEvt && !standalone ? '<button class="btn ghost full" style="margin-top:10px" data-a="install">📲 Install BlovMed as an app</button>' : ''}
    <button class="btn ghost full" style="margin-top:10px" data-a="guide">Show the welcome guide again</button>
@@ -437,13 +540,16 @@ function viewSettings() {
 let tab = 'today';
 function render() {
   applyTheme();
-  if (!L.set.guided) {
+  const gate = ((isIOS && !standalone) || inAppBrowser) && !L.set.installSkip;
+  if (gate || !L.dev || !L.set.guided) {
     $('#nav').innerHTML = '';
-    $('#app').innerHTML = ((isIOS && !standalone) || inAppBrowser) && !L.set.installSkip ? viewInstall() : viewGuide();
+    $('#app').innerHTML = gate ? viewInstall() : !L.dev ? viewLogin() : viewGuide();
     return;
   }
-  $('#app').innerHTML = tab === 'today' ? viewToday() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(L.doc, false) : tab === 'sick' ? viewSick() : viewSettings();
-  $('#nav').innerHTML = [['today', '🏠', 'Today'], ['meds', '💊', 'Meds'], ['sick', '🤒', 'Sick'], ['money', '💰', 'Money'], ['set', '⚙️', 'Settings']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
+  const nm = (L.doc.prof && L.doc.prof.full) || L.doc.cfg.name || '';
+  $('#app').innerHTML = (tab === 'me' ? '' : `<button class="avatar top" data-a="me" aria-label="Profile and settings">${esc((nm[0] || '👤').toUpperCase())}</button>`)
+    + (tab === 'today' ? viewToday() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(L.doc, false) : tab === 'sick' ? viewSick() : tab === 'buy' ? U.buyHtml(L.doc, false) : viewMe());
+  $('#nav').innerHTML = [['today', '🏠', 'Today'], ['meds', '💊', 'Meds'], ['sick', '🤒', 'Sick'], ['buy', '🛒', 'Buy'], ['money', '💰', 'Money']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
   requestAnimationFrame(placeCar);
   const n = today(), late = [...lastNight(n), ...C.dosesOn(L.doc, n.ymd)].filter(d => status(d, n) === 'overdue').length;
   document.title = late ? `(${late}) BlovMed` : 'BlovMed';
@@ -460,6 +566,7 @@ document.addEventListener('click', async ev => {
   const b = ev.target.closest('[data-a]'); if (!b || b.disabled) return;
   const a = b.dataset.a, D = L.doc;
   if (U.uiClick(a, b)) return;
+  if (await U.v6Click(a, b)) return;
   if (a === 'tab') { tab = b.dataset.k; sx = null; render(); window.scrollTo(0, 0); }
   else if (a === 'tk') take(b.dataset.k);
   else if (a === 'undo') undo(b.dataset.k);
@@ -477,11 +584,47 @@ document.addEventListener('click', async ev => {
   else if (a === 'test') { sfx.take(); vroom(); screech(.5); buzz([40, 40, 60]); pop('+10'); }
   else if (a === 'sx') { sx = b.dataset.k || null; pick = {}; if (sx) U.pushView(); render(); window.scrollTo(0, 0); }
   else if (a === 'sback') U.goBack();
+  else if (a === 'signin') { const u = ($('#li_user').value || '').trim(), p = ($('#li_pin').value || '').trim(); if (!u || !/^\d{6}$/.test(p)) return say('Almost', 'Type your username and your 6-digit PIN.', '🔑'); b.disabled = true; await signIn(u, p); b.disabled = false; }
+  else if (a === 'signout') signOut();
+  else if (a === 'pin') pinSheet();
+  else if (a === 'pinsave') {
+    const o = $('#pn_old').value, n1 = $('#pn_new').value, n2 = $('#pn_new2').value;
+    if (!/^\d{6}$/.test(n1)) return say('6 digits please', 'Your new PIN must be exactly 6 numbers.', '🔑'); if (n1 !== n2) return say("PINs don't match", 'Type the same new PIN twice.', '🔑');
+    try { await api('/auth/pin', { pid: L.dev.pid, key: L.dev.key, role: 'phone', old: o, pin: n1 }); U.closeSheet(); toast('PIN changed 🔑'); }
+    catch (e) { say(e.status === 403 ? 'Current PIN is wrong' : 'No connection', e.status === 403 ? 'Check your current PIN and try again.' : 'Try again when you are online.', '🔑'); }
+  }
+  else if (a === 'me') { if (tab !== 'me') prevTab = tab; tab = 'me'; U.pushView(); render(); window.scrollTo(0, 0); }
+  else if (a === 'meback') U.goBack();
+  else if (a === 'meseg') { meSeg = b.dataset.k; render(); }
+  else if (a === 'stars') starsSheet();
+  else if (a === 'streak') streakSheet();
+  else if (a === 'level') levelSheet();
+  else if (a === 'logmore') { logMore = true; render(); }
+  else if (a === 'logsick') logSheet(b.dataset.k);
+  else if (a === 'logother') logSheet(null);
+  else if (a === 'lssev') { LS.sev = +b.dataset.v; document.querySelectorAll('#ls_sev button').forEach(x => x.classList.toggle('on', +x.dataset.v === LS.sev)); sfx.tick(); }
+  else if (a === 'lstook') { const id = b.dataset.id; LS.took[id] = !LS.took[id]; b.classList.toggle('on', LS.took[id]); }
+  else if (a === 'lssave') {
+    const k = LS.k, nm2 = k ? U.SYM[k].n : (($('#ls_name') && $('#ls_name').value.trim()) || '');
+    if (!nm2) return say('What is it?', 'Type a short name, like "Back pain".', '✍️');
+    if (!LS.sev) return say('How bad is it?', 'Tap Mild, Moderate or Severe.', '🤒');
+    const t = now(), id = C.rid('k'), took = [];
+    for (const mid of Object.keys(LS.took).filter(x => LS.took[x])) {
+      const m = D.meds[mid]; if (!m) continue;
+      if (m.prn) { if (!(await guardOK(D, m))) continue; const r = C.rid('r'); D.prn[r] = { id: m.id, t, p: m.perDose, u: t }; }
+      took.push({ t, name: m.name });
+    }
+    D.sick[id] = { id, sym: k || 'other', name: nm2, t, sev: LS.sev, note: ($('#ls_note').value || '').trim(), took, ups: [], open: true, by: 'phone', u: t };
+    U.closeSheet(); buzz(30); save();
+    if (LS.sev === 3) say('Take care 💖', `It's in your logbook and ${esc(D.cfg.helper || 'your helper')} will be told. If it's very bad, see a doctor.${D.prof && D.prof.emphone ? '<br><br>Emergency contact: <a href="tel:' + esc(D.prof.emphone.replace(/[^\d+]/g, '')) + '" style="color:var(--acc);font-weight:700">' + esc(D.prof.emphone) + '</a>' : ''}`, '🚑');
+    else toast('Saved to your logbook 📖');
+  }
   else if (a === 'howto') U.openSheet(`<h1 style="margin-top:0">⭐ Stars and streaks</h1>${howHtml()}<button class="btn full" data-a="close">Got it</button>`);
   else if (a === 'garage') garageSheet();
   else if (a === 'model' || a === 'color') {
-    if (a === 'model') L.set.model = b.dataset.v; else L.set.car = +b.dataset.v;
-    persist(); sfx.honk(); buzz(20);
+    const D2 = L.doc, t2 = now();
+    if (a === 'model') { L.set.model = b.dataset.v; D2.cfg = { ...D2.cfg, model: b.dataset.v, color: vehCol(), u: t2 }; } else { L.set.car = +b.dataset.v; D2.cfg = { ...D2.cfg, model: vehId(), color: +b.dataset.v, u: t2 }; }
+    persist(); queueSync(); if (isShip()) shipHorn(0); else sfx.honk(); buzz(20);
     if (U.sheetOpen()) garageSheet(); else render();
   }
   else if (a === 'gnext') { const n = $('#g_name'); if (n && n.value.trim() !== D.cfg.name) D.cfg = { ...D.cfg, name: n.value.trim(), u: now() }; persist(); gs = Math.min(GSTEPS - 1, gs + 1); U.pushView(); sfx.tick(); render(); window.scrollTo(0, 0); }
@@ -492,8 +635,6 @@ document.addEventListener('click', async ev => {
     L.set.guided = true; gs = 0; tab = 'today'; save(); window.scrollTo(0, 0); sfx.win();
     if (!C.medList(D).length) setTimeout(() => U.openEditor(CX), 300);
   }
-  else if (a === 'gclaim') { const c = ($('#g_code').value || '').trim(); if (c) await claimCode(c, true); }
-  else if (a === 'copycode') { try { await navigator.clipboard.writeText(L.pendingGift); toast('Code copied 📋'); } catch (e) { say('Your code', esc(L.pendingGift), '🎁'); } }
   else if (a === 'guide') { L.set.guided = false; gs = 0; persist(); render(); window.scrollTo(0, 0); }
   else if (a === 'noinstall') { L.set.installSkip = true; persist(); render(); }
   else if (a === 'install') { if (installEvt) { installEvt.prompt(); installEvt = null; } }
@@ -514,7 +655,7 @@ document.addEventListener('click', async ev => {
   else if (a === 'usualnew') U.openEditor(CX, null, { ...U.fromLib(D, U.SYM[sx].m[0] || 'para', 'prn'), name: '', lib: undefined, maxDay: null, maxPer: null, minGap: 0, notes: '' });
   else if (a === 'mk') U.openEditor(CX, null, U.fromLib(D, b.dataset.id, b.dataset.m));
   else if (a === 'pk') { const k = b.dataset.k; const it = buyList(sx).find(i => i.k === k); pick[k] = !(pick[k] ?? !(it && it.have)); sfx.tick(); render(); }
-  else if (a === 'feel') { const id = C.rid('k'), t = now(); D.sick[id] = { id, sym: sx, name: U.SYM[sx].n, t, u: t }; buzz(30); save(); toast('Logged. Feel better soon 💖'); }
+  else if (a === 'feel_old') { const id = C.rid('k'), t = now(); D.sick[id] = { id, sym: sx, name: U.SYM[sx].n, t, u: t }; buzz(30); save(); toast('Logged. Feel better soon 💖'); }
   else if (a === 'addshop') {
     const open = new Set(C.live(D.shop).filter(s => !s.done).map(s => s.text)), t = now(); let n = 0;
     for (const i of buyList(sx)) if ((pick[i.k] ?? !i.have) && !open.has(i.text)) { const id = C.rid('s'); D.shop[id] = { id, text: i.text, kind: i.kind, why: U.SYM[sx].n, add: t, done: 0, u: t }; n++; }
@@ -526,18 +667,6 @@ document.addEventListener('click', async ev => {
     const m = D.meds[b.dataset.id]; if (!m) return;
     if (!(await guardOK(D, m))) return;
     const id = C.rid('r'), t = now(); D.prn[id] = { id: m.id, t, p: m.perDose, u: t }; sfx.take(); buzz(40); save();
-  }
-  else if (a === 'code') {
-    if (!L.dev) { await sync(); if (!L.dev) return say('No connection', 'Check your internet and try again.', '📶'); }
-    try { const j = await api('/p/code', { pid: L.dev.pid, key: L.dev.key, role: 'phone' });
-      U.openSheet(`<h1 style="margin-top:0">Link code</h1><p>On your helper's phone, open <b>${esc(location.origin + location.pathname.replace(/index\.html$/, ''))}admin.html</b> and type this code:</p><div class="code">${j.code}</div><p class="mini">Works once, for 15 minutes. Only share it with someone you trust.</p><button class="btn full" data-a="close">Done</button>`);
-    } catch (e) { say('No connection', 'Could not get a code. Check your internet.', '📶'); }
-  }
-  else if (a === 'unlink') { if (!(await ask({ icon: '🤝', title: 'Remove your helper?', text: 'They will no longer see or edit your meds.', ok: 'Remove', danger: true }))) return; try { const j = await api('/p/unlink', { pid: L.dev.pid, key: L.dev.key, role: 'phone' }); L.meta = j.meta; persist(); render(); toast('Helper removed'); } catch (e) { say('No connection', 'Could not reach the server.', '📶'); } }
-  else if (a === 'join') {
-    const code = ($('#joincode').value || '').trim(); if (!code) return;
-    if (C.medList(D).length && !(await ask({ icon: '📲', title: 'Restore your data?', text: 'This replaces the medicines on this phone with your saved data.', ok: 'Restore' }))) return;
-    await claimCode(code, false);
   }
   else if (a === 'reconnect') { L.dev = null; L.moved = false; persist(); await sync(); render(); }
 });
@@ -552,7 +681,8 @@ document.addEventListener('change', ev => {
   save();
 });
 document.addEventListener('input', U.uiInput);
-U.onBack(() => { if (!L.set.guided) { if (gs > 0) { gs--; render(); } return; } if (sx) { sx = null; render(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && !L.dev && e.target.tagName === 'INPUT') { const b = $('[data-a="signin"]'); if (b) b.click(); } });
+U.onBack(() => { if (!L.set.guided) { if (gs > 0) { gs--; render(); } return; } if (tab === 'me') { tab = prevTab; render(); return; } if (sx) { sx = null; render(); } });
 window.addEventListener('resize', placeCar);
 
 /* ---------- keep fresh ---------- */
@@ -571,8 +701,4 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !window._reloading) { window._reloading = 1; location.reload(); } });
 }
-if (giftCode) {
-  if (isIOS && !standalone) { L.pendingGift = giftCode; persist(); } // claimed later inside the Home Screen app
-  else claimCode(giftCode, true);
-}
-render(); persist(); checkPush(); if (!giftCode || (isIOS && !standalone)) sync();
+render(); persist(); if (L.dev) { checkPush(); sync(); }
