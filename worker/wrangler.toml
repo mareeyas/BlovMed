@@ -7,4 +7,4 @@ crons = ["* * * * *"]
 
 [[kv_namespaces]]
 binding = "KV"
-id = "PASTE_YOUR_KV_NAMESPACE_ID_HERE"
+id = "88ab0a3b05854543aed4775fae5a920e"
