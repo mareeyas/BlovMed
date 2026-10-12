@@ -13,7 +13,7 @@ export default {
       let b; try { b = await req.json(); } catch { return new Response('bad', { status: 400, headers: cors }); }
       if (!b?.sub?.endpoint || !Array.isArray(b.meds)) return new Response('bad', { status: 400, headers: cors });
       const db = await getDb(env), id = await sha(b.sub.endpoint);
-      db.users[id] = { sub: b.sub, tz: b.tz || 'Asia/Manila', meds: b.meds.slice(0, 30), taken: (b.taken || []).slice(-400), sent: db.users[id]?.sent || {} };
+      db.users[id] = { sub: b.sub, tz: b.tz || 'Asia/Manila', nags: b.nags !== false, meds: b.meds.slice(0, 30), taken: (b.taken || []).slice(-400), sent: db.users[id]?.sent || {} };
       await env.KV.put('db', JSON.stringify(db));
       return new Response('ok', { headers: cors });
     }

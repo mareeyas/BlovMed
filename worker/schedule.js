@@ -11,7 +11,8 @@ export function dueMessages(rec, ms) {
   const n = localNow(rec.tz, ms), y = localNow(rec.tz, ms - 864e5);
   const days = [{ ymd: n.ymd, min: n.min }, { ymd: y.ymd, min: n.min + 1440 }]; // today, and yesterday (for nags after midnight)
   const taken = new Set(rec.taken || []), sent = rec.sent || {}, out = [];
-  for (const m of rec.meds) for (const t of m.times) for (const day of days) for (const off of OFFSETS) {
+  const offs = rec.nags === false ? [0] : OFFSETS; // user can turn nags off in Settings
+  for (const m of rec.meds) for (const t of m.times) for (const day of days) for (const off of offs) {
     const el = day.min - t;
     if (el < off || el >= off + 5) continue;        // 5-minute catch-up window if a cron run is late
     const k = `${day.ymd}|${m.id}|${t}`, sk = `${k}|${off}`;
