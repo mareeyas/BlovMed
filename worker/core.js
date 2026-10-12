@@ -25,8 +25,8 @@ export const hrs = (first, gap, cnt) => { const b = mins(first), o = []; for (le
 /* ---------- the shared document ---------- */
 // Every record carries u (last changed, ms). Merging keeps the newest copy of each record,
 // so the phone and the back office can both edit and always end up with the same data.
-export const DEFCFG = { paydays: [15, 30], cur: '₱', lowDays: 4, alertHour: 10, shopHour: 18, nags: true, miss: 60, name: '', helper: '', libPrice: {}, ptsBase: 0, u: 0 };
-export const newDoc = () => ({ v: 2, meds: {}, log: {}, prn: {}, buys: {}, shop: {}, sick: {}, snz: {}, cfg: { ...DEFCFG, libPrice: {} } });
+export const DEFCFG = { paydays: [15, 30], cur: '₱', lowDays: 4, alertHour: 10, shopHour: 18, nags: true, miss: 60, name: '', helper: '', gift: '', libPrice: {}, libOv: {}, symMeds: {}, ptsBase: 0, resetAt: 0, resetDay: '', u: 0 };
+export const newDoc = () => ({ v: 2, meds: {}, log: {}, prn: {}, buys: {}, shop: {}, sick: {}, snz: {}, cfg: { ...DEFCFG, libPrice: {}, libOv: {}, symMeds: {} } });
 const MAPS = ['meds', 'log', 'prn', 'buys', 'shop', 'sick', 'snz'];
 const newer = (a, b) => !a || (b.u || 0) > (a.u || 0) || ((b.u || 0) === (a.u || 0) && JSON.stringify(b) > JSON.stringify(a));
 
@@ -41,7 +41,7 @@ export function merge(a, b, now = Date.now()) {
   }
   const ca = a.cfg || {}, cb = b.cfg || {};
   o.cfg = { ...DEFCFG, ...(newer(ca, cb) ? cb : ca) };
-  o.cfg.libPrice = { ...(o.cfg.libPrice || {}) };
+  for (const k of ['libPrice', 'libOv', 'symMeds']) o.cfg[k] = { ...(o.cfg[k] || {}) };
   prune(o, now);
   return o;
 }
@@ -155,14 +155,21 @@ export function buyAdvice(r, p, money) {
 }
 
 /* ---------- streaks and points ---------- */
+export const TITLES = ['Rookie driver', 'Street racer', 'Drift king', 'Road hero', 'Speed star', 'Legend'];
+export const PER_LEVEL = 150;
+export const titleFor = lvl => TITLES[Math.min(TITLES.length - 1, Math.floor((lvl - 1) / 2))];
+// Stars: +10 per dose, +20 per day with every dose taken. A reset (cfg.resetAt/resetDay) starts everything at 0.
 export function stats(doc, today) {
-  const perfect = d => { const ds = dosesOn(doc, d); return ds.length ? ds.every(x => x.at) : null; };
+  const rAt = doc.cfg.resetAt || 0, rDay = doc.cfg.resetDay || '';
+  const perfect = d => { const ds = dosesOn(doc, d); return ds.length ? ds.every(x => x.at && x.at >= rAt) : null; };
+  const todayDs = dosesOn(doc, today);
   let streak = perfect(today) ? 1 : 0, pd = 0;
-  for (let i = 1; i < 366; i++) { const r = perfect(addD(today, -i)); if (r === null) continue; if (r) streak++; else break; }
-  for (let i = 0; i < 180; i++) if (perfect(addD(today, -i))) pd++;
-  const taken = Object.values(doc.log).filter(e => e.t).length;
-  const pts = (doc.cfg.ptsBase || 0) + taken * 10 + pd * 20, lvl = Math.floor(pts / 150) + 1;
-  return { streak, pts, lvl, title: ['Rookie driver', 'Street racer', 'Drift king', 'Road hero', 'Speed star', 'Legend'][Math.min(5, Math.floor((lvl - 1) / 2))] };
+  for (let i = 1; i < 366; i++) { const d = addD(today, -i); if (d < rDay) break; const r = perfect(d); if (r === null) continue; if (r) streak++; else break; }
+  for (let i = 0; i < 180; i++) { const d = addD(today, -i); if (d < rDay) break; if (perfect(d)) pd++; }
+  const taken = Object.values(doc.log).filter(e => e.t && e.t >= rAt).length;
+  const pts = Math.max(0, (doc.cfg.ptsBase || 0) + taken * 10 + pd * 20), lvl = Math.floor(pts / PER_LEVEL) + 1;
+  return { streak, pts, lvl, title: titleFor(lvl), into: pts - (lvl - 1) * PER_LEVEL, toNext: lvl * PER_LEVEL - pts, nextTitle: titleFor(lvl + 1),
+    left: todayDs.filter(x => !x.at).length, todayTotal: todayDs.length };
 }
 export function week(doc, today) {
   const o = [];

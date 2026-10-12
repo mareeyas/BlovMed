@@ -2,7 +2,7 @@ import { buildPushPayload } from '@block65/webcrypto-web-push';
 import { dueMessages } from './schedule.js'; // old app version, kept until his phone updates
 import { merge, newDoc, dueReminders } from './core.js';
 
-const MAX_PROFILES = 5;   // stops strangers from filling your free storage
+const MAX_PROFILES = 10;   // stops strangers from filling your free storage
 const MAX_BODY = 300000;  // bytes
 const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'POST,GET,OPTIONS' };
 const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...cors, 'content-type': 'application/json' } });
@@ -40,16 +40,17 @@ async function auth(env, b) {
   const h = await sha(b.key);
   return (b.role === 'admin' ? prof.ah : prof.ph).includes(h) ? prof : null;
 }
-const meta = p => ({ seen: p.seen || {}, subs: { phone: !!(p.subs && p.subs.phone), admin: !!(p.subs && p.subs.admin) }, admins: (p.ah || []).length, tz: p.tz });
+const meta = p => ({ phone: (p.ph || []).length > 0, seen: p.seen || {}, subs: { phone: !!(p.subs && p.subs.phone), admin: !!(p.subs && p.subs.admin) }, admins: (p.ah || []).length, tz: p.tz });
 
 async function pSync(env, b) {
   let prof, out = {};
-  if (!b.pid) { // first sync from his phone creates the profile
-    if (b.role !== 'phone') return J({ error: 'auth' }, 401);
+  if (!b.pid) { // first sync creates the profile: from his phone, or from the back office when setting up a gift
+    if (!/^(phone|admin)$/.test(b.role)) return J({ error: 'auth' }, 401);
     const idx = (await env.KV.get('idx', 'json')) || [];
     if (idx.length >= MAX_PROFILES) return J({ error: 'full' }, 403);
     const pid = rnd(16), key = rnd(24);
-    prof = { pid, ph: [await sha(key)], ah: [], tz: 'Asia/Manila', subs: {}, doc: newDoc(), seen: {}, dead: [], created: Date.now() };
+    const h = await sha(key);
+    prof = { pid, ph: b.role === 'phone' ? [h] : [], ah: b.role === 'admin' ? [h] : [], tz: 'Asia/Manila', subs: {}, doc: newDoc(), seen: {}, dead: [], created: Date.now() };
     idx.push(pid); await env.KV.put('idx', JSON.stringify(idx));
     out = { pid, key };
   } else {
@@ -75,8 +76,9 @@ async function pSync(env, b) {
 async function pCode(env, b) {
   const prof = await auth(env, b); if (!prof) return J({ error: 'auth' }, 401);
   const code = newCode();
-  await env.KV.put('c:' + code, JSON.stringify({ pid: prof.pid, role: b.role === 'phone' ? 'admin' : 'phone' }), { expirationTtl: 900 });
-  return J({ code: code.slice(0, 4) + '-' + code.slice(4) });
+  const gift = b.role === 'admin' && b.gift === true; // gift links stay valid for 7 days
+  await env.KV.put('c:' + code, JSON.stringify({ pid: prof.pid, role: b.role === 'phone' ? 'admin' : 'phone' }), { expirationTtl: gift ? 7 * 86400 : 900 });
+  return J({ code: code.slice(0, 4) + '-' + code.slice(4), days: gift ? 7 : 0 });
 }
 
 async function pClaim(env, b) {
