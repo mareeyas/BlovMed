@@ -26,13 +26,16 @@ export const hrs = (first, gap, cnt) => { const b = mins(first), o = []; for (le
 // Every record carries u (last changed, ms). Merging keeps the newest copy of each record,
 // so the phone and the back office can both edit and always end up with the same data.
 export const DEFCFG = { paydays: [15, 30], cur: '₱', lowDays: 4, alertHour: 10, shopHour: 18, nags: true, miss: 60, name: '', helper: '', gift: '', libPrice: {}, libOv: {}, symMeds: {}, ptsBase: 0, resetAt: 0, resetDay: '', model: '', color: -1, u: 0 };
-export const newDoc = () => ({ v: 2, meds: {}, log: {}, prn: {}, buys: {}, shop: {}, sick: {}, snz: {}, prof: { u: 0 }, cfg: { ...DEFCFG, libPrice: {}, libOv: {}, symMeds: {} } });
-const MAPS = ['meds', 'log', 'prn', 'buys', 'shop', 'sick', 'snz'];
+export const newDoc = () => ({ v: 2, gen: 0, act: {}, meds: {}, log: {}, prn: {}, buys: {}, shop: {}, sick: {}, snz: {}, prof: { u: 0 }, cfg: { ...DEFCFG, libPrice: {}, libOv: {}, symMeds: {} } });
+const MAPS = ['meds', 'log', 'prn', 'buys', 'shop', 'sick', 'snz', 'act'];
 const newer = (a, b) => !a || (b.u || 0) > (a.u || 0) || ((b.u || 0) === (a.u || 0) && JSON.stringify(b) > JSON.stringify(a));
 
 export function merge(a, b, now = Date.now()) {
   a = a || newDoc(); b = b || newDoc();
-  const o = newDoc();
+  // A reset in the back office raises gen; the newer generation replaces older data completely.
+  const ga = a.gen || 0, gb = b.gen || 0;
+  if (ga > gb) b = newDoc(); else if (gb > ga) a = newDoc();
+  const o = newDoc(); o.gen = Math.max(ga, gb);
   for (const k of MAPS) {
     const r = {}, A = a[k] || {}, B = b[k] || {};
     for (const id in A) r[id] = A[id];
@@ -56,6 +59,7 @@ function prune(o, now) {
   for (const k in o.buys) if ((o.buys[k].t || 0) < now - 730 * day) delete o.buys[k];
   for (const k in o.shop) { const s = o.shop[k]; if ((s.del || s.done) && s.u < now - 30 * day) delete o.shop[k]; }
   for (const k in o.meds) { const m = o.meds[k]; if (m.del && m.u < now - 365 * day) delete o.meds[k]; }
+  const acts = Object.values(o.act).filter(x => x.t > now - 60 * day).sort((x, y) => y.t - x.t).slice(0, 600); o.act = {}; for (const x of acts) o.act[x.id] = x;
 }
 export const live = o => Object.values(o || {}).filter(x => !x.del);
 export const medList = doc => live(doc.meds).sort((a, b) => (a.c || 0) - (b.c || 0));
@@ -81,9 +85,31 @@ export function timesOn(m, d) {
 }
 export const dkey = (d, id, t) => d + '|' + id + '|' + t;
 export const takenAt = (doc, k) => (doc.log[k] && doc.log[k].t) || 0;
+// Follow-up doses: after he takes an as-needed medicine (for example when sick), the next dose is
+// planned from the actual time he took it, every f.every hours, never above the 24-hour limit.
+export function takesOf(doc, m) {
+  const o = [];
+  for (const k in doc.log) { const e = doc.log[k]; if (e.t && k.split('|')[1] === m.id) o.push(e.t); }
+  for (const k in doc.prn) { const e = doc.prn[k]; if (!e.del && e.id === m.id) o.push(e.t); }
+  return o.sort((a, b) => a - b);
+}
+export function followNext(doc, m) {
+  const f = m.follow; if (!f || !f.on || !f.every) return null;
+  const takes = takesOf(doc, m), last = takes.length ? takes[takes.length - 1] : f.start;
+  let next = last + f.every * 36e5;
+  if (m.maxDay && m.perDose) { const k = Math.floor(m.maxDay / m.perDose); const recent = takes.filter(t => t > next - 864e5); if (k > 0 && recent.length >= k) next = Math.max(next, recent[recent.length - k] + 864e5); }
+  if (m.minGap) next = Math.max(next, last + m.minGap * 36e5);
+  return next > f.end ? null : next;
+}
 export function dosesOn(doc, d) {
   const o = [];
   for (const m of medList(doc)) for (const t of timesOn(m, d)) { const k = dkey(d, m.id, t); o.push({ key: k, m, t, d, at: takenAt(doc, k) }); }
+  for (const m of medList(doc)) {
+    if (!m.prn) continue;
+    for (const k in doc.log) { const e = doc.log[k], [kd, id, t] = k.split('|'); if (kd === d && id === m.id && e.f && e.t) o.push({ key: k, m, t, d, at: e.t, follow: true }); }
+    const nx = followNext(doc, m);
+    if (nx) { const ln = localNow(m.follow.tz, nx), t = pad(Math.floor(ln.min / 60)) + ':' + pad(ln.min % 60), k = dkey(ln.ymd, m.id, t); if (ln.ymd === d && !takenAt(doc, k)) o.push({ key: k, m, t, d, at: 0, follow: true, due: nx }); }
+  }
   return o.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
 }
 export function schedText(m) {
@@ -157,14 +183,15 @@ export function buyAdvice(r, p, money) {
 }
 
 /* ---------- streaks and points ---------- */
+export const sched = (doc, d) => dosesOn(doc, d).filter(x => !x.follow);
 export const TITLES = ['Rookie driver', 'Street racer', 'Drift king', 'Road hero', 'Speed star', 'Legend'];
 export const PER_LEVEL = 150;
 export const titleFor = lvl => TITLES[Math.min(TITLES.length - 1, Math.floor((lvl - 1) / 2))];
 // Stars: +10 per dose, +20 per day with every dose taken. A reset (cfg.resetAt/resetDay) starts everything at 0.
 export function stats(doc, today) {
   const rAt = doc.cfg.resetAt || 0, rDay = doc.cfg.resetDay || '';
-  const perfect = d => { const ds = dosesOn(doc, d); return ds.length ? ds.every(x => x.at && x.at >= rAt) : null; };
-  const todayDs = dosesOn(doc, today);
+  const perfect = d => { const ds = sched(doc, d); return ds.length ? ds.every(x => x.at && x.at >= rAt) : null; };
+  const todayDs = sched(doc, today);
   let streak = perfect(today) ? 1 : 0, pd = 0;
   for (let i = 1; i < 366; i++) { const d = addD(today, -i); if (d < rDay) break; const r = perfect(d); if (r === null) continue; if (r) streak++; else break; }
   for (let i = 0; i < 180; i++) { const d = addD(today, -i); if (d < rDay) break; if (perfect(d)) pd++; }
@@ -177,7 +204,7 @@ export function stats(doc, today) {
 export function days(doc, today, n) {
   const rAt = doc.cfg.resetAt || 0, o = [];
   for (let i = n - 1; i >= 0; i--) {
-    const d = addD(today, -i), ds = dosesOn(doc, d), done = ds.filter(x => x.at && x.at >= rAt).length;
+    const d = addD(today, -i), ds = sched(doc, d), done = ds.filter(x => x.at && x.at >= rAt).length;
     o.push({ d, total: ds.length, done, st: !ds.length ? 'rest' : done === ds.length ? 'full' : d === today ? 'today' : done ? 'part' : 'miss' });
   }
   return o;
@@ -191,12 +218,12 @@ export function bestStreak(doc, today) {
 export function earnings(doc, today, max = 15) {
   const rAt = doc.cfg.resetAt || 0, o = [];
   for (const k in doc.log) { const e = doc.log[k]; if (!e.t || e.t < rAt) continue; const m = doc.meds[k.split('|')[1]]; o.push({ t: e.t, pts: 10, what: (m ? m.name : 'Dose') }); }
-  for (const x of days(doc, today, 60)) if (x.st === 'full') { const ds = dosesOn(doc, x.d); o.push({ t: Math.max(...ds.map(y => y.at)), pts: 20, what: 'Perfect day bonus' }); }
+  for (const x of days(doc, today, 60)) if (x.st === 'full') { const ds = sched(doc, x.d); o.push({ t: Math.max(...ds.map(y => y.at)), pts: 20, what: 'Perfect day bonus' }); }
   return o.sort((a, b) => b.t - a.t).slice(0, max);
 }
 export function week(doc, today) {
   const o = [];
-  for (let i = 6; i >= 0; i--) { const d = addD(today, -i), ds = dosesOn(doc, d); o.push({ d, total: ds.length, done: ds.filter(x => x.at).length }); }
+  for (let i = 6; i >= 0; i--) { const d = addD(today, -i), ds = sched(doc, d); o.push({ d, total: ds.length, done: ds.filter(x => x.at).length }); }
   return o;
 }
 
@@ -216,7 +243,7 @@ export function lastTake(doc, m) {
 
 /* ---------- what the worker sends, and when ---------- */
 const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
-export function dueReminders(prof, sent, ms) {
+export function dueReminders(prof, sent, ms, phase = 'cron') {
   const doc = prof.doc, subs = prof.subs || {}, out = [];
   if (!doc) return out;
   const cfg = { ...DEFCFG, ...doc.cfg }, n = localNow(prof.tz || 'Asia/Manila', ms), who = cfg.name || 'He';
@@ -224,7 +251,8 @@ export function dueReminders(prof, sent, ms) {
   const add = (sk, to, title, body, tag) => { if (!sent[sk] && subs[to]) out.push({ sk, to, title, body, tag: tag || sk, url: to === 'admin' ? 'admin.html' : './' }); };
   const cur = cfg.cur || '₱', money = x => cur + Math.round(x).toLocaleString('en-US');
 
-  for (const [d, base] of [[n.ymd, n.min], [addD(n.ymd, -1), n.min + 1440]]) {
+  const fresh = t => { const age = ms - t; return phase === 'sync' ? age >= -6e4 && age < 10 * 6e4 : age >= 2 * 6e4 && age < 10 * 6e4; };
+  if (phase === 'cron') for (const [d, base] of [[n.ymd, n.min], [addD(n.ymd, -1), n.min + 1440]]) {
     for (const x of dosesOn(doc, d)) {
       if (x.at) continue;
       const el = base - mins(x.t), z = doc.snz[x.key], pills = plural(x.m.perDose, 'pill');
@@ -237,7 +265,7 @@ export function dueReminders(prof, sent, ms) {
     }
   }
 
-  if (win(n.min, (cfg.alertHour ?? 10) * 60)) {
+  if (phase === 'cron' && win(n.min, (cfg.alertHour ?? 10) * 60)) {
     const p = plan(doc, n.ymd), low = p.rows.filter(r => r.dl.days <= (cfg.lowDays ?? 4));
     if (low.length) {
       const line = r => `${r.m.name}: ${plural(r.dl.days, 'day')} left`;
@@ -253,19 +281,20 @@ export function dueReminders(prof, sent, ms) {
   const open = live(doc.shop).filter(s => !s.done && ms - s.add < 3 * 864e5);
   const batches = {};
   for (const s of open) (batches[s.add] ||= []).push(s.text);
-  for (const t in batches) if (win((ms - +t) / 6e4, 60)) add('shop|' + t, 'phone', '🛒 Reminder: things to buy', batches[t].join(', ') + '. Tick them off in BlovMed when you have them.');
-  if (open.length && win(n.min, (cfg.shopHour ?? 18) * 60)) add(n.ymd + '|shop', 'phone', '🛒 Still on your list', open.map(s => s.text).join(', '));
+  if (phase === 'cron') for (const t in batches) if (win((ms - +t) / 6e4, 60)) add('shop|' + t, 'phone', '🛒 Reminder: things to buy', batches[t].join(', ') + '. Tick them off in BlovMed when you have them.');
+  if (phase === 'cron' && open.length && win(n.min, (cfg.shopHour ?? 18) * 60)) add(n.ymd + '|shop', 'phone', '🛒 Still on your list', open.map(s => s.text).join(', '));
 
   const SEV = ['', 'mild', 'moderate', 'severe'], ST = { better: 'is feeling better', same: 'feels the same', worse: 'is feeling WORSE', gone: 'is better now ✅' };
   for (const s of live(doc.sick)) {
-    if (s.by !== 'admin' && ms - s.t >= 0 && ms - s.t < 10 * 6e4) add('sick|' + s.id, 'admin', `${s.sev === 3 ? '⚠️ ' : ''}${who} isn't feeling well`, `${s.name || s.sym}${s.sev ? ' (' + SEV[s.sev] + ')' : ''}${s.note ? ': ' + s.note : ''}`);
-    for (const up of s.ups || []) if (up.by !== 'admin' && ms - up.t >= 0 && ms - up.t < 10 * 6e4) add('sickU|' + s.id + '|' + up.t, 'admin', `${who} ${ST[up.st] || 'updated a sick log'}`, `${s.name || s.sym}${up.note ? ': ' + up.note : ''}`);
+    if (s.by !== 'admin' && fresh(s.t)) add('sick|' + s.id, 'admin', `${s.sev === 3 ? '⚠️ ' : ''}${who} isn't feeling well`, `${s.name || s.sym}${s.sev ? ' (' + SEV[s.sev] + ')' : ''}${s.note ? ': ' + s.note : ''}`);
+    for (const up of s.ups || []) if (up.by !== 'admin' && fresh(up.t)) add('sickU|' + s.id + '|' + up.t, 'admin', `${who} ${ST[up.st] || 'updated a sick log'}`, `${s.name || s.sym}${up.note ? ': ' + up.note : ''}`);
   }
-  for (const s of live(doc.sick)) for (const up of s.ups || []) if (up.by === 'admin' && up.note && ms - up.t >= 0 && ms - up.t < 10 * 6e4) add('sickN|' + s.id + '|' + up.t, 'phone', `💌 ${cfg.helper || 'Your helper'} sent you a note`, up.note);
+  for (const s of live(doc.sick)) for (const up of s.ups || []) if (up.by === 'admin' && up.note && fresh(up.t)) add('sickN|' + s.id + '|' + up.t, 'phone', `💌 ${cfg.helper || 'Your helper'} sent you a note`, up.note);
   const pf = doc.prof || {};
-  if (pf.by === 'phone' && ms - pf.u >= 0 && ms - pf.u < 10 * 6e4) add('prof|' + pf.u, 'admin', `${who} updated his profile`, 'Open the back office to see the changes.');
+  if (pf.by === 'phone' && fresh(pf.u)) add('prof|' + pf.u, 'admin', `${who} updated his profile`, 'Open the back office to see the changes.');
   const added = {};
-  for (const s of live(doc.shop)) if (s.by === 'phone' && !s.why && ms - s.add >= 0 && ms - s.add < 10 * 6e4) (added[s.add] ||= []).push(s.text);
+  for (const s of live(doc.shop)) if (s.by === 'phone' && !s.why && fresh(s.add)) (added[s.add] ||= []).push(s.text);
   for (const t in added) add('shopA|' + t, 'admin', `${who} added to his buy list`, added[t].join(', '));
+  if (cfg.tellTake !== false) for (const k in doc.log) { const e = doc.log[k]; if (e.t && e.by !== 'helper' && fresh(e.t)) { const m = doc.meds[k.split('|')[1]]; add('took|' + k + '|' + e.t, 'admin', `✅ ${who} took ${m ? m.name : 'a dose'}`, `Logged at ${fmtT(pad(Math.floor(localNow(prof.tz || 'Asia/Manila', e.t).min / 60)) + ':' + pad(localNow(prof.tz || 'Asia/Manila', e.t).min % 60))}.`, 'took'); } }
   return out;
 }

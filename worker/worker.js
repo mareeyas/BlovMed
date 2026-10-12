@@ -25,7 +25,7 @@ const okPass = p => typeof p === 'string' && p.length >= 8 && p.length <= 100;
 const clean = u => String(u || '').trim().toLowerCase();
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
     const path = new URL(req.url).pathname;
     if (req.method !== 'POST') return new Response('BlovMed push worker is running', { headers: cors });
@@ -35,7 +35,7 @@ export default {
     const routes = { '/p/sync': pSync, '/auth/login': login, '/auth/admin-login': adminLogin, '/auth/admin-signup': adminSignup, '/auth/admin-set': adminSet,
       '/auth/set-login': setLogin, '/auth/pin': changePin, '/auth/admin-pass': changePass, '/auth/logout': logout, '/auth/logout-all': logoutAll,
       '/p/code': pCode, '/p/claim': pClaim, '/sync': legacySync };
-    try { if (routes[path]) return await routes[path](env, b); }
+    try { if (routes[path]) return await routes[path](env, b, ctx); }
     catch (e) { console.log('error', e.message); return J({ error: 'server' }, 500); }
     return J({ error: 'not found' }, 404);
   },
@@ -164,7 +164,7 @@ async function logoutAll(env, b) { // back office: sign him out everywhere (lost
 }
 
 /* ---------- data sync ---------- */
-async function pSync(env, b) {
+async function pSync(env, b, ctx) {
   const a = await auth(env, b); if (!a) return J({ error: 'auth' }, 401);
   const prof = a.prof, before = JSON.stringify(prof), out = {};
   prof.doc = merge(prof.doc, b.doc);
@@ -184,6 +184,7 @@ async function pSync(env, b) {
   }
   const now = Date.now(), changed = JSON.stringify(prof) !== before;
   if (changed || now - (dev.seen || 0) > 10 * 6e4) { dev.seen = now; await putProf(env, prof); }
+  if (changed && ctx) ctx.waitUntil(pushNow(env, prof)); // instant alerts (sick logs, notes, doses taken...)
   return reply(prof, out);
 }
 
@@ -214,6 +215,18 @@ async function send(env, sub, m) {
     if (r.status === 404 || r.status === 410) return 'dead';
     return r.ok ? 'ok' : 'retry';
   } catch (e) { console.log('push failed', e.message); return 'retry'; }
+}
+async function pushNow(env, prof) {
+  const now = Date.now(), sent = (await env.KV.get('s:' + prof.pid, 'json')) || {};
+  const devs = Object.entries(prof.devs).filter(([, d]) => d.sub);
+  const view = { ...prof, subs: { phone: devs.some(([, d]) => d.role === 'phone'), admin: devs.some(([, d]) => d.role === 'admin') } };
+  let changed = false;
+  for (const m of dueReminders(view, sent, now, 'sync')) {
+    let ok = false;
+    for (const [, d] of devs) if (d.role === m.to && (await send(env, d.sub, m)) === 'ok') ok = true;
+    if (ok) { sent[m.sk] = now; changed = true; }
+  }
+  if (changed) await env.KV.put('s:' + prof.pid, JSON.stringify(sent));
 }
 async function run(env) {
   const now = Date.now(), idx = (await env.KV.get('idx', 'json')) || [];
