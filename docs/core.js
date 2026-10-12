@@ -248,7 +248,8 @@ export function dueReminders(prof, sent, ms, phase = 'cron') {
   if (!doc) return out;
   const cfg = { ...DEFCFG, ...doc.cfg }, n = localNow(prof.tz || 'Asia/Manila', ms), who = cfg.name || 'He';
   const win = (el, off) => el >= off && el < off + 5; // 5-minute catch-up window if a run is late
-  const add = (sk, to, title, body, tag) => { if (!sent[sk] && subs[to]) out.push({ sk, to, title, body, tag: tag || sk, url: to === 'admin' ? 'admin.html' : './' }); };
+  // link = where tapping the alert takes you (#dose=…, #sick=…, #buy, #money, #profile, #act)
+  const add = (sk, to, title, body, tag, link = '') => { if (!sent[sk] && subs[to]) out.push({ sk, to, title, body, tag: tag || sk, url: (to === 'admin' ? 'admin.html' : './') + link }); };
   const cur = cfg.cur || '₱', money = x => cur + Math.round(x).toLocaleString('en-US');
 
   const fresh = t => { const age = ms - t; return phase === 'sync' ? age >= -6e4 && age < 10 * 6e4 : age >= 2 * 6e4 && age < 10 * 6e4; };
@@ -258,10 +259,10 @@ export function dueReminders(prof, sent, ms, phase = 'cron') {
       const el = base - mins(x.t), z = doc.snz[x.key], pills = plural(x.m.perDose, 'pill');
       const how = x.m.notes ? ' ' + x.m.notes + '.' : '';
       if (z && z.until > ms) continue;
-      if (z && ms - z.until >= 0 && ms - z.until < 5 * 6e4) add(x.key + '|z' + z.until, 'phone', `Snooze over: ${x.m.name}`, `Take ${pills} now, then tap I took it.`, x.key);
+      if (z && ms - z.until >= 0 && ms - z.until < 5 * 6e4) add(x.key + '|z' + z.until, 'phone', `Snooze over: ${x.m.name}`, `Take ${pills} now, then tap Take.`, x.key, '#dose=' + x.key);
       for (const off of cfg.nags ? [0, 10, 25] : [0]) if (win(el, off))
-        add(x.key + '|' + off, 'phone', off ? `Still need to take ${x.m.name}?` : `Time for ${x.m.name} 💊`, off ? `You haven't logged it yet. Take ${pills}.` : `Take ${pills}.${how} Then tap I took it.`, x.key);
-      if (cfg.miss && win(el, cfg.miss)) add(x.key + '|a', 'admin', `${who} hasn't logged ${x.m.name}`, `It was due at ${fmtT(x.t)} (${cfg.miss} min ago).`);
+        add(x.key + '|' + off, 'phone', off ? `Still need to take ${x.m.name}?` : `Time for ${x.m.name} 💊`, off ? `You haven't logged it yet. Take ${pills}.` : `Take ${pills}.${how} Then tap Take.`, x.key, '#dose=' + x.key);
+      if (cfg.miss && win(el, cfg.miss)) add(x.key + '|a', 'admin', `${who} hasn't logged ${x.m.name}`, `It was due at ${fmtT(x.t)} (${cfg.miss} min ago).`, null, '#dose=' + x.key);
     }
   }
 
@@ -269,32 +270,32 @@ export function dueReminders(prof, sent, ms, phase = 'cron') {
     const p = plan(doc, n.ymd), low = p.rows.filter(r => r.dl.days <= (cfg.lowDays ?? 4));
     if (low.length) {
       const line = r => `${r.m.name}: ${plural(r.dl.days, 'day')} left`;
-      add(n.ymd + '|low', 'phone', '🛒 Time to buy meds', low.map(r => `${line(r)}. ${buyAdvice(r, p, money)}`).join(' '));
-      add(n.ymd + '|lowA', 'admin', `${who} is running low`, low.map(line).join(' · '));
+      add(n.ymd + '|low', 'phone', '🛒 Time to buy meds', low.map(r => `${line(r)}. ${buyAdvice(r, p, money)}`).join(' '), null, '#buy');
+      add(n.ymd + '|lowA', 'admin', `${who} is running low`, low.map(line).join(' · '), null, '#buy');
     }
     if (p.p1 === n.ymd && p.payTotal > 0) {
-      add(n.ymd + '|pay', 'phone', '💰 Payday! Set aside for meds', `Put aside ${money(p.payTotal)} for your meds until ${fmtD(p.p2)}.`);
-      add(n.ymd + '|payA', 'admin', 'Payday med budget', `${who} needs ${money(p.payTotal)} for meds until ${fmtD(p.p2)}.`);
+      add(n.ymd + '|pay', 'phone', '💰 Payday! Set aside for meds', `Put aside ${money(p.payTotal)} for your meds until ${fmtD(p.p2)}.`, null, '#money');
+      add(n.ymd + '|payA', 'admin', 'Payday med budget', `${who} needs ${money(p.payTotal)} for meds until ${fmtD(p.p2)}.`, null, '#money');
     }
   }
 
   const open = live(doc.shop).filter(s => !s.done && ms - s.add < 3 * 864e5);
   const batches = {};
   for (const s of open) (batches[s.add] ||= []).push(s.text);
-  if (phase === 'cron') for (const t in batches) if (win((ms - +t) / 6e4, 60)) add('shop|' + t, 'phone', '🛒 Reminder: things to buy', batches[t].join(', ') + '. Tick them off in BlovMed when you have them.');
-  if (phase === 'cron' && open.length && win(n.min, (cfg.shopHour ?? 18) * 60)) add(n.ymd + '|shop', 'phone', '🛒 Still on your list', open.map(s => s.text).join(', '));
+  if (phase === 'cron') for (const t in batches) if (win((ms - +t) / 6e4, 60)) add('shop|' + t, 'phone', '🛒 Reminder: things to buy', batches[t].join(', ') + '. Tick them off in BlovMed when you have them.', null, '#buy');
+  if (phase === 'cron' && open.length && win(n.min, (cfg.shopHour ?? 18) * 60)) add(n.ymd + '|shop', 'phone', '🛒 Still on your list', open.map(s => s.text).join(', '), null, '#buy');
 
   const SEV = ['', 'mild', 'moderate', 'severe'], ST = { better: 'is feeling better', same: 'feels the same', worse: 'is feeling WORSE', gone: 'is better now ✅' };
   for (const s of live(doc.sick)) {
-    if (s.by !== 'admin' && fresh(s.t)) add('sick|' + s.id, 'admin', `${s.sev === 3 ? '⚠️ ' : ''}${who} isn't feeling well`, `${s.name || s.sym}${s.sev ? ' (' + SEV[s.sev] + ')' : ''}${s.note ? ': ' + s.note : ''}`);
-    for (const up of s.ups || []) if (up.by !== 'admin' && fresh(up.t)) add('sickU|' + s.id + '|' + up.t, 'admin', `${who} ${ST[up.st] || 'updated a sick log'}`, `${s.name || s.sym}${up.note ? ': ' + up.note : ''}`);
+    if (s.by !== 'admin' && fresh(s.t)) add('sick|' + s.id, 'admin', `${s.sev === 3 ? '⚠️ ' : ''}${who} isn't feeling well`, `${s.name || s.sym}${s.sev ? ' (' + SEV[s.sev] + ')' : ''}${s.note ? ': ' + s.note : ''}`, null, '#sick=' + s.id);
+    for (const up of s.ups || []) if (up.by !== 'admin' && fresh(up.t)) add('sickU|' + s.id + '|' + up.t, 'admin', `${who} ${ST[up.st] || 'updated a sick log'}`, `${s.name || s.sym}${up.note ? ': ' + up.note : ''}`, null, '#sick=' + s.id);
   }
-  for (const s of live(doc.sick)) for (const up of s.ups || []) if (up.by === 'admin' && up.note && fresh(up.t)) add('sickN|' + s.id + '|' + up.t, 'phone', `💌 ${cfg.helper || 'Your helper'} sent you a note`, up.note);
+  for (const s of live(doc.sick)) for (const up of s.ups || []) if (up.by === 'admin' && up.note && fresh(up.t)) add('sickN|' + s.id + '|' + up.t, 'phone', `💌 ${cfg.helper || 'Your helper'} sent you a note`, up.note, null, '#sick=' + s.id);
   const pf = doc.prof || {};
-  if (pf.by === 'phone' && fresh(pf.u)) add('prof|' + pf.u, 'admin', `${who} updated his profile`, 'Open the back office to see the changes.');
+  if (pf.by === 'phone' && fresh(pf.u)) add('prof|' + pf.u, 'admin', `${who} updated his profile`, 'Tap to see the changes.', null, '#profile');
   const added = {};
   for (const s of live(doc.shop)) if (s.by === 'phone' && !s.why && fresh(s.add)) (added[s.add] ||= []).push(s.text);
-  for (const t in added) add('shopA|' + t, 'admin', `${who} added to his buy list`, added[t].join(', '));
-  if (cfg.tellTake !== false) for (const k in doc.log) { const e = doc.log[k]; if (e.t && e.by !== 'helper' && fresh(e.t)) { const m = doc.meds[k.split('|')[1]]; add('took|' + k + '|' + e.t, 'admin', `✅ ${who} took ${m ? m.name : 'a dose'}`, `Logged at ${fmtT(pad(Math.floor(localNow(prof.tz || 'Asia/Manila', e.t).min / 60)) + ':' + pad(localNow(prof.tz || 'Asia/Manila', e.t).min % 60))}.`, 'took'); } }
+  for (const t in added) add('shopA|' + t, 'admin', `${who} added to his buy list`, added[t].join(', '), null, '#buy');
+  if (cfg.tellTake !== false) for (const k in doc.log) { const e = doc.log[k]; if (e.t && e.by !== 'helper' && fresh(e.t)) { const m = doc.meds[k.split('|')[1]]; add('took|' + k + '|' + e.t, 'admin', `✅ ${who} took ${m ? m.name : 'a dose'}`, `Logged at ${fmtT(pad(Math.floor(localNow(prof.tz || 'Asia/Manila', e.t).min / 60)) + ':' + pad(localNow(prof.tz || 'Asia/Manila', e.t).min % 60))}.`, 'took', '#act'); } }
   return out;
 }

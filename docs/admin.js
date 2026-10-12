@@ -54,7 +54,32 @@ async function sync() {
   } finally { syncing = false; if (again) { again = false; queueSync(200); } }
 }
 const typing = () => document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
-function signedIn(j) { A = { pid: j.pid, key: j.key, doc: C.merge(C.newDoc(), j.doc), meta: j.meta, synced: now() }; persist(); tab = 'home'; render(); checkPush(); }
+function signedIn(j) { A = { pid: j.pid, key: j.key, doc: C.merge(C.newDoc(), j.doc), meta: j.meta, synced: now() }; persist(); tab = 'home'; render(); checkPush(); connectLive(); }
+
+/* ---------- live connection: the server tells this page the moment anything changes ---------- */
+let ws = null, wsTry = 0, wsTimer = null, live = false;
+function connectLive() {
+  if (!WORKER || !A || ws) return;
+  try { ws = new WebSocket(WORKER.replace(/^http/, 'ws') + `/ws?pid=${A.pid}&key=${A.key}&role=admin`); } catch (e) { return; }
+  ws.onopen = () => { wsTry = 0; live = true; sync(); if (!U.sheetOpen() && !typing()) render(); };
+  ws.onmessage = e => { if (e.data === 'changed') queueSync(30); };
+  ws.onclose = () => { ws = null; if (live) { live = false; if (A && !U.sheetOpen() && !typing()) render(); } if (A && !document.hidden) { clearTimeout(wsTimer); wsTimer = setTimeout(connectLive, Math.min(30000, 1000 * 2 ** wsTry++)); } };
+  ws.onerror = () => {};
+}
+setInterval(() => { if (ws && ws.readyState === 1) ws.send('ping'); }, 30000);
+
+/* ---------- tapping an alert opens what it is about ---------- */
+window.addEventListener('hashchange', () => { if (A && location.hash.length > 1) route(location.hash); });
+function route(h) {
+  if (!A || !h) return;
+  const [k, v] = h.replace(/^#/, '').split('='), id = v ? decodeURIComponent(v) : '';
+  history.replaceState(null, '', location.pathname); U.closeSheet(true);
+  if (k === 'sick') { tab = 'health'; healthSeg = 'log'; render(); if (A.doc.sick[id]) U.openSick(id); }
+  else if (k === 'profile') { tab = 'health'; healthSeg = 'profile'; render(); }
+  else if (k === 'dose') { tab = 'home'; render(); if (A.doc.meds[id.split('|')[1]]) doseSheet(id); }
+  else if (['buy', 'money', 'act', 'meds', 'home', 'set'].includes(k)) { tab = k; render(); }
+  window.scrollTo(0, 0);
+}
 
 /* ---------- my alerts ---------- */
 // The back office has its own service worker scope (./admin), matching the BlovMed Admin app.
@@ -89,7 +114,7 @@ function viewLogin() {
   const up = loginMode === 'up';
   return `<div class="guide"><div class="gbody"><div class="gicon">💖</div><h1>BlovMed back office</h1><p class="lead">Help manage his medicines from your own phone.</p>
    <div class="seg"><button class="${up ? '' : 'on'}" data-a="lmode" data-k="in">Sign in</button><button class="${up ? 'on' : ''}" data-a="lmode" data-k="up">Create account</button></div>
-   <label>Your username</label><input type="text" id="ad_user" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. mary">
+   <label>Your username</label><input type="text" id="ad_user" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. mareeya">
    <label>Password${up ? ' (at least 8 characters)' : ''}</label><input type="password" id="ad_pass" autocomplete="${up ? 'new-password' : 'current-password'}">
    ${up ? '<label>Password again</label><input type="password" id="ad_pass2" autocomplete="new-password">' : ''}
    <button class="btn full big" style="margin-top:16px" data-a="${up ? 'signup' : 'adlogin'}">${up ? 'Create my back office' : 'Sign in'}</button>
@@ -174,14 +199,14 @@ function viewSettings() {
   const devs = (m.devices || []).filter(d => d.role === 'phone').sort((a, b) => b.seen - a.seen);
   return `<h1>Settings</h1>
   <div class="card" style="border-color:var(--acc)"><b>🔑 His sign-in</b><p class="mini" style="margin:6px 0 0">${m.user ? `Username: <b>@${esc(m.user)}</b>. Change it or set a new PIN below.` : 'Create his username and a 6-digit PIN. He signs in with these on all his devices.'}</p>
-   <label>His username</label><input type="text" id="hl_user" value="${esc(m.user || '')}" autocapitalize="none" spellcheck="false" placeholder="e.g. bob">
+   <label>His username</label><input type="text" id="hl_user" value="${esc(m.user || '')}" autocapitalize="none" spellcheck="false" placeholder="e.g. aaron">
    <label>${m.user ? 'New PIN (leave empty to keep his PIN)' : '6-digit PIN'}</label><input type="text" id="hl_pin" class="pinput" inputmode="numeric" maxlength="6" placeholder="••••••">
    <button class="btn full" style="margin-top:10px" data-a="setlogin">${m.user ? 'Save' : 'Create his sign-in'}</button>
    ${m.user ? '<button class="btn ghost full" style="margin-top:8px" data-a="sendlogin">💌 Send him his sign-in</button>' : ''}
    ${devs.length ? `<div class="gh">His devices</div>${devs.map(d => `<div class="row mini"><span>📱 ${esc(d.name || 'Device')}${d.push ? ' · 🔔' : ' · 🔕'}</span><span>${d.seen ? U.ago(d.seen) : ''}</span></div>`).join('')}
      <button class="btn ghost full" style="margin-top:10px" data-a="logoutall">Sign him out of all devices</button>` : ''}</div>
-  <div class="card"><label style="margin-top:0">His name</label><input type="text" data-s="name" value="${esc(c.name)}"><label>Your name (shown on his app)</label><input type="text" data-s="helper" value="${esc(c.helper)}" placeholder="e.g. Mary">
-   <label>💌 Welcome message for him</label><textarea data-s="gift" rows="3" placeholder="Shown on the first screen of his welcome guide">${esc(c.gift || '')}</textarea></div>
+  <div class="card"><label style="margin-top:0">His name</label><input type="text" data-s="name" value="${esc(c.name)}"><label>Your name (shown on his app)</label><input type="text" data-s="helper" value="${esc(c.helper)}" placeholder="e.g. Mareeya">
+   <label>💌 Welcome message for him</label><textarea data-s="gift" rows="3" placeholder="e.g. Happy monthsary, Blov! I made this so you never forget your meds. Love, Mareeya 💖">${esc(c.gift || '')}</textarea></div>
   ${canInstall() ? `<div class="card" style="border-color:var(--acc)"><b>📲 Install the back office</b><p class="mini" style="margin:6px 0 10px">Install it like an app, with its own BlovMed Admin icon. Its alerts then show with that name and icon.</p><button class="btn full" data-a="install">Install BlovMed Admin</button></div>` : ''}
   <div class="card"><b>🔔 My alerts (this device)</b><p class="mini">Missed doses, low stock, sick logs and updates, profile changes and things he adds to his buy list.</p>
    ${pushOn && m.subs && m.subs.admin ? '<span class="pill ok">Alerts are on</span>' : '<button class="btn full" data-a="perm">Turn on alerts for me</button>'}
@@ -211,7 +236,7 @@ function doseSheet(key) {
 }
 function sendLoginSheet(pin) {
   const D = A.doc, user = (A.meta || {}).user;
-  const msg = `Hi ${D.cfg.name || 'love'}! 💖 I made you an app to help with your meds.\n\n1. Open this link: ${appLink()}\n2. On iPhone, use Safari and follow the steps to add it to your Home Screen.\n3. Sign in with\n   Username: ${user}\n   PIN: ${pin || '(the PIN I gave you)'}\n\nYou can change your PIN in the app.`;
+  const msg = `Hi ${D.cfg.name || 'Blov'}! 💖 I made you an app so you never forget your meds, Beloved.\n\n1. Open this link: ${appLink()}\n2. On iPhone, use Safari and follow the steps to add it to your Home Screen.\n3. Sign in with\n   Username: ${user}\n   PIN: ${pin || '(the PIN I gave you)'}\n\nYou can change your PIN in the app.`;
   A.loginMsg = msg;
   U.openSheet(`<h1 style="margin-top:0">💌 Send him his sign-in</h1><p class="sub">Send this privately. ${pin ? '' : 'Set a new PIN first if you want it included.'}</p>
    <div class="gift">${esc(msg)}</div>
@@ -221,7 +246,7 @@ function render() {
   document.body.classList.add('wide');
   if (!A) { U.keep($('#app'), () => { $('#app').innerHTML = viewLogin(); }); $('#nav').innerHTML = ''; return; }
   const nm = ((A.meta || {}).adminNames || [])[0];
-  U.keep($('#app'), () => { $('#app').innerHTML = `<div class="topbar">${nm ? '@' + esc(nm) + ' · ' : ''}<span>${A.synced ? 'live · ' + U.ago(A.synced) : ''}</span>${canInstall() ? '<button class="mini-btn" data-a="install">📲 Install</button>' : ''}<button class="mini-btn ghost" data-a="logout">Sign out</button></div>`
+  U.keep($('#app'), () => { $('#app').innerHTML = `<div class="topbar">${nm ? '@' + esc(nm) + ' · ' : ''}<span class="${live ? 'live' : 'off'}">${live ? '● Live' : '○ Connecting…'}</span>${canInstall() ? '<button class="mini-btn" data-a="install">📲 Install</button>' : ''}<button class="mini-btn ghost" data-a="logout">Sign out</button></div>`
     + (tab === 'home' ? viewHome() : tab === 'act' ? viewActivity() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(A.doc, true) : tab === 'health' ? viewHealth() : tab === 'buy' ? U.buyHtml(A.doc, true) : viewSettings()); });
   $('#nav').innerHTML = [['home', '📋', 'Overview'], ['act', '📜', 'Activity'], ['meds', '💊', 'Meds'], ['health', '🩺', 'Health'], ['buy', '🛒', 'Buy'], ['set', '⚙️', 'Settings']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
 }
@@ -283,7 +308,7 @@ document.addEventListener('click', async ev => {
   else if (a === 'logoutall') { if (await ask({ icon: '📵', title: 'Sign him out everywhere?', text: 'Use this if he lost a device. He signs in again with his username and PIN.', ok: 'Sign out all', danger: true })) { try { const j = await api('/auth/logout-all', me()); A.meta = j.meta; persist(); render(); toast('Signed out of all his devices'); } catch (e) { say('No connection', '', '📶'); } } }
   else if (a === 'adset') { try { const j = await api('/auth/admin-set', { ...me(), user: ($('#as_user').value || '').trim().toLowerCase(), pass: $('#as_pass').value }); A.meta = j.meta; persist(); render(); toast('Login created 🔐'); } catch (e) { say('Could not create it', errText(e), '🔐'); } }
   else if (a === 'adpass') { try { await api('/auth/admin-pass', { ...me(), user: A.meta.adminNames[0], old: $('#ap_old').value, pass: $('#ap_new').value }); toast('Password changed 🔐'); render(); } catch (e) { say('Could not change it', e.status === 403 ? 'Your current password is wrong.' : errText(e), '🔐'); } }
-  else if (a === 'logout') { if (await ask({ icon: '👋', title: 'Sign out?', text: 'You can sign in again with your username and password.', ok: 'Sign out', danger: true })) { try { await api('/auth/logout', me()); } catch (e) {} A = null; localStorage.removeItem(AK); render(); } }
+  else if (a === 'logout') { if (await ask({ icon: '👋', title: 'Sign out?', text: 'You can sign in again with your username and password.', ok: 'Sign out', danger: true })) { try { await api('/auth/logout', me()); } catch (e) {} if (ws) ws.close(); A = null; localStorage.removeItem(AK); render(); } }
 });
 document.addEventListener('change', ev => {
   if (A && U.uiChange(ev)) return;
@@ -297,11 +322,20 @@ document.addEventListener('change', ev => {
 });
 document.addEventListener('input', U.uiInput);
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && !A && e.target.tagName === 'INPUT') { const b = $('[data-a="adlogin"],[data-a="signup"]'); if (b) b.click(); } });
-setInterval(() => { if (!document.hidden && A) sync(); }, 8000);
-if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'sync' && A) sync(); });
+setInterval(() => { if (!document.hidden && A && !live) sync(); }, 10000); // backup when the live connection is down
+setInterval(() => { if (!document.hidden && A) sync(); }, 120000);
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', async e => {
+    if (!e.data || !A) return;
+    if (e.data.type === 'sync') sync();
+    if (e.data.type === 'open') { await sync(); route(new URL(e.data.url).hash); }
+  });
+  const had = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !window._reloading) { window._reloading = 1; location.reload(); } });
+}
 const liveT = {};
 document.addEventListener('input', ev => { const k = ev.target.dataset && ev.target.dataset.s; if (!A || !['name', 'helper', 'gift'].includes(k)) return; clearTimeout(liveT[k]); liveT[k] = setTimeout(() => { A.doc.cfg = { ...A.doc.cfg, [k]: ev.target.value.trim(), u: now() }; quiet(); }, 600); });
 setInterval(() => { if (A && !U.sheetOpen() && !typing()) render(); }, 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && A) sync(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && A) { sync(); connectLive(); } });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', SWOPT).catch(() => {});
-render(); if (A) { sync(); checkPush(); }
+render(); if (A) { checkPush(); connectLive(); const h = location.hash; sync().then(() => route(h)); }

@@ -75,6 +75,31 @@ async function api(path, body) {
   const j = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(j.error || 'failed'); e.status = r.status; e.minutes = j.minutes; throw e; } return j;
 }
 
+/* ---------- live connection: the server tells this phone the moment anything changes ---------- */
+let ws = null, wsTry = 0, wsTimer = null, live = false;
+function connectLive() {
+  if (!WORKER || !L.dev || ws) return;
+  try { ws = new WebSocket(WORKER.replace(/^http/, 'ws') + `/ws?pid=${L.dev.pid}&key=${L.dev.key}&role=phone`); } catch (e) { return; }
+  ws.onopen = () => { wsTry = 0; live = true; sync(); if (!U.sheetOpen() && !typing()) render(); };
+  ws.onmessage = e => { if (e.data === 'changed') queueSync(30); };
+  ws.onclose = e => { ws = null; live = false; if (e.code === 4001 && L.dev) { signedOut('You were signed out of this device.'); return; } if (L.dev && !document.hidden) { clearTimeout(wsTimer); wsTimer = setTimeout(connectLive, Math.min(30000, 1000 * 2 ** wsTry++)); } };
+  ws.onerror = () => {};
+}
+setInterval(() => { if (ws && ws.readyState === 1) ws.send('ping'); }, 30000);
+
+/* ---------- tapping an alert opens what it is about ---------- */
+window.addEventListener('hashchange', () => { if (L.dev && location.hash.length > 1) route(location.hash); });
+function route(h) {
+  if (!h || !L.dev || !L.set.guided) return;
+  const [k, v] = h.replace(/^#/, '').split('='), id = v ? decodeURIComponent(v) : '';
+  history.replaceState(null, '', location.pathname); U.closeSheet(true);
+  if (k === 'dose') { tab = 'today'; render(); if (L.doc.meds[id.split('|')[1]]) setTimeout(() => doseSheet(id), 60); }
+  else if (k === 'sick') { tab = 'sick'; sx = null; render(); if (L.doc.sick[id]) U.openSick(id); }
+  else if (k === 'profile') { tab = 'me'; meSeg = 'profile'; render(); }
+  else if (['buy', 'money', 'meds', 'today'].includes(k)) { tab = k; render(); }
+  window.scrollTo(0, 0);
+}
+
 /* ---------- sign in / sign out ---------- */
 const devName = () => /iPad/.test(navigator.userAgent) ? 'iPad' : /iPhone/.test(navigator.userAgent) ? 'iPhone' : /Android/.test(navigator.userAgent) ? 'Android' : 'Computer';
 let loginMsg = '';
@@ -84,7 +109,8 @@ async function signIn(user, pin) {
     L.dev = { pid: j.pid, key: j.key }; L.doc = C.merge(C.newDoc(), j.doc); L.meta = j.meta; L.moved = false; L.user = j.meta.user;
     if (L.doc.cfg.model) L.set.model = L.doc.cfg.model;
     U.act(L.doc, '📱', `Signed in on ${devName()}`); persist(); loginMsg = ''; sfx.win(); render(); window.scrollTo(0, 0); queueSync();
-    if (Notification && Notification.permission === 'granted') checkPush(); else sync();
+    if (window.Notification && Notification.permission === 'granted') checkPush(); else sync();
+    connectLive();
     toast(`Welcome${L.doc.cfg.name ? ', ' + L.doc.cfg.name : ''} 💖`);
   } catch (e) {
     say(e.status === 429 ? 'Too many tries' : 'That didn\'t work', e.status === 429 ? `Wait ${e.minutes || 15} minutes, then try again.` : 'Check your username and 6-digit PIN. Ask your helper if you forgot them.', e.status === 429 ? '⏳' : '🔑');
@@ -96,11 +122,11 @@ async function signOut() {
   try { const reg = await navigator.serviceWorker.ready, s = await reg.pushManager.getSubscription(); if (s) await s.unsubscribe(); } catch (e) {}
   signedOut('');
 }
-function signedOut(msg) { L = { doc: C.newDoc(), dev: null, set: L.set, sub: null }; loginMsg = msg; persist(); tab = 'today'; U.closeSheet(); render(); }
+function signedOut(msg) { if (ws) { const w = ws; ws = null; w.onclose = null; w.close(); } L = { doc: C.newDoc(), dev: null, set: L.set, sub: null }; loginMsg = msg; persist(); tab = 'today'; U.closeSheet(); render(); }
 function viewLogin() {
   return `<div class="guide"><div class="gbody"><div class="gicon">💊</div><h1>Sign in to BlovMed</h1><p class="lead">Use the username and PIN you were given.</p>
    ${loginMsg ? `<div class="alert"><i>ℹ️</i><span>${esc(loginMsg)}</span></div>` : ''}
-   <label>Username</label><input type="text" id="li_user" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. bob">
+   <label>Username</label><input type="text" id="li_user" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="e.g. aaron">
    <label>6-digit PIN</label><input type="password" id="li_pin" class="pinput" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="current-password" placeholder="••••••">
    <button class="btn full big" style="margin-top:16px" data-a="signin">Sign in</button>
    <p class="mini" style="text-align:center;margin-top:12px">You stay signed in until you sign out. Use the same sign-in on all your devices.</p></div></div>`;
@@ -440,7 +466,7 @@ function logSheet(k) {
   U.openSheet(`<h1 style="margin-top:0">${x ? x.e + ' ' + x.n : '✍️ How do you feel?'}</h1>
    ${x ? '' : '<label>What is it?</label><input type="text" id="ls_name" placeholder="e.g. Back pain, rash, chills">'}
    <label>How bad is it?</label><div class="opt" id="ls_sev">${[1, 2, 3].map(v => `<button data-a="lssev" data-v="${v}">${U.SEVE[v]} ${U.SEV[v]}</button>`).join('')}</div>
-   <label>Anything to add? <span class="mini">(optional)</span></label><textarea id="ls_note" rows="2" placeholder="e.g. Started after lunch, a bit dizzy too"></textarea>
+   <label>Anything to add? <span class="mini">(optional)</span></label><textarea id="ls_note" rows="2" placeholder="e.g. Started after lunch, Blov feels a bit dizzy"></textarea>
    ${meds.length + extra.length ? `<label>Did you take something for it just now?</label><div class="card" style="margin:0">${meds.map(m => `<button class="check" data-a="lstook" data-id="${m.id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(m.name)}<small>${m.perDose} now${(m.every || (m.lib && U.LIB[m.lib] && U.LIB[m.lib].every)) ? ' · next doses go on Today' : ''}</small></span></button>`).join('')}${extra.map(id => `<button class="check" data-a="lstook" data-id="lib:${id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(U.lib(D, id).n)}<small>Adds it to your medicines · next doses go on Today</small></span></button>`).join('')}</div>` : ''}
    <div class="sbar"><button class="btn ghost" data-a="close">Cancel</button><button class="btn" data-a="lssave">Save to logbook</button></div>`);
 }
@@ -519,7 +545,7 @@ function viewGuide() {
   const body = [
     () => `<div class="intro"><div class="road"></div><div class="car drivein">${carSVG()}</div><span class="hearts">💖</span></div><h1>Welcome${name ? ', ' + esc(name) : ''}!</h1><p class="lead">BlovMed reminds you to take your meds, plans what to buy, and makes it a little game.</p>
       ${D.cfg.gift ? `<div class="gift"><small>💌 A message from ${esc(helper || 'someone who cares about you')}</small>${esc(D.cfg.gift)}</div>` : ''}
-      <label>What should I call you?</label><input type="text" id="g_name" data-s="name" value="${esc(name)}" placeholder="Your name or nickname">`,
+      <label>What should I call you?</label><input type="text" id="g_name" data-s="name" value="${esc(name)}" placeholder="e.g. Aaron, Blov or Beloved">`,
     () => `<div class="gicon">🗓️</div><h1>How it works</h1><p class="lead">Just 1 tap a dose.</p>
       <div class="step"><span class="e">🔔</span><span><b>I remind you</b><span>Even when the app is closed.</span></span></div>
       <div class="step"><span class="e">✅</span><span><b>Tap "I took it"</b><span>One big button. That's it.</span></span></div>
@@ -552,7 +578,7 @@ function viewSettings() {
   const sw = (k, cfg) => { const v = cfg ? D.cfg[k] : st[k]; return `<button class="toggle ${v ? 'on' : ''}" data-a="${cfg ? 'ctog' : 'tog'}" data-k="${k}" aria-pressed="${!!v}"><i></i></button>`; };
   return `<h1>Settings</h1>
   <div class="list">
-   <div class="srow"><span>Name</span><input type="text" data-s="name" data-live="1" value="${esc(D.cfg.name)}" placeholder="Your name" style="max-width:55%"></div>
+   <div class="srow"><span>Name</span><input type="text" data-s="name" data-live="1" value="${esc(D.cfg.name)}" placeholder="e.g. Blov" style="max-width:55%"></div>
    ${row('🔔 Phone reminders', pushTxt)}
    ${row('🔁 Remind me again if I forget', sw('nags', 1))}
    ${row('🚗 My ride', `<button class="mini-btn ghost" data-a="garage">${esc(veh().name)}</button>`)}
@@ -744,9 +770,14 @@ setInterval(() => {
   if ((tab === 'today' || d !== lastDay) && !U.sheetOpen() && !busy() && !typing) render();
   lastDay = d;
 }, 30000);
-setInterval(() => { if (!document.hidden) sync(); }, 15000);
-if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'sync') sync(); });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkPush(); sync(); if (!U.sheetOpen()) render(); } });
+setInterval(() => { if (!document.hidden && !live) sync(); }, 12000); // backup when the live connection is down
+setInterval(() => { if (!document.hidden) sync(); }, 120000);
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', async e => {
+  if (!e.data) return;
+  if (e.data.type === 'sync') sync();
+  if (e.data.type === 'open') { await sync(); route(new URL(e.data.url).hash); }
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkPush(); sync(); connectLive(); if (!U.sheetOpen()) render(); } });
 
 /* ---------- service worker: offline + push + auto-update ---------- */
 if ('serviceWorker' in navigator) {
@@ -754,4 +785,4 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !window._reloading) { window._reloading = 1; location.reload(); } });
 }
-render(); persist(); if (L.dev) { checkPush(); sync(); }
+render(); persist(); if (L.dev) { checkPush(); connectLive(); const h = location.hash; sync().then(() => route(h)); }

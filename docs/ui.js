@@ -245,7 +245,7 @@ function drawEditor() {
   const e = E, s = e.sched, t = s.type, doc = CX.doc();
   openSheet(`<h1 style="margin-top:0">${e.isNew ? 'Add medicine' : 'Edit medicine'}</h1>
   ${e.isNew ? `<label>Common medicines (fills in the safe limits)</label><select data-s="lib"><option value="">Choose one, or type your own below</option>${Object.entries(LIB).map(([k, l]) => `<option value="${k}" ${e.lib === k ? 'selected' : ''}>${l.n}</option>`).join('')}</select>` : ''}
-  <label>Name</label><input type="text" id="f_name" value="${esc(e.name)}" placeholder="e.g. Losartan 50 mg">
+  <label>Name</label><input type="text" id="f_name" value="${esc(e.name)}" placeholder="e.g. Zykast 10 mg">
   <label>What is it for? <span class="mini">(optional)</span></label><input type="text" id="f_for" value="${esc(e.purpose || '')}" placeholder="e.g. Blood pressure">
   <label>How to take it <span class="mini">(optional, shows in reminders)</span></label><input type="text" id="f_notes" value="${esc(e.notes || '')}" placeholder="e.g. After breakfast, with water">
   <label>Pills each time</label><input type="number" id="f_per" min="1" value="${e.perDose}">
@@ -417,8 +417,8 @@ export function openSick(id) {
   openSheet(`<h1 style="margin-top:0">${y.e} ${esc(s.name || y.n)}</h1><p class="sub">${s.open ? 'Ongoing since ' + fmtDT(s.t) : 'Over' + (s.end ? ' · lasted ' + dur(s.end - s.t) : '')}</p>
    <div class="card"><div class="tl">${ev.map(e => `<div><span class="mini">${fmtDT(e.t)}</span><br>${e.h}</div>`).join('')}</div></div>
    ${s.open ? (ROLE === 'phone' ? `<h2>How do you feel now?</h2><div class="opt" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${['better', 'same', 'worse', 'gone'].map(k => `<button data-a="sickup" data-st="${k}">${ST[k][0]} ${ST[k][1]}</button>`).join('')}</div>
-      <input type="text" id="sk_note" placeholder="Add a note (optional)" style="margin-top:10px">`
-     : `<h2>Send ${esc(who === 'He' ? 'him' : who)} a note</h2><textarea id="sk_note" rows="2" placeholder="e.g. Drink water and rest. Call me if it gets worse."></textarea><button class="btn full" style="margin-top:8px" data-a="sickup" data-st="note">Send note</button>
+      <input type="text" id="sk_note" placeholder="Add a note, e.g. slept a bit better" style="margin-top:10px">`
+     : `<h2>Send ${esc(who === 'He' ? 'him' : who)} a note</h2><textarea id="sk_note" rows="2" placeholder="e.g. Drink water and rest, Blov. Call me if it gets worse 💖"></textarea><button class="btn full" style="margin-top:8px" data-a="sickup" data-st="note">Send note</button>
       <button class="btn ghost full" style="margin-top:8px" data-a="sickup" data-st="gone">Mark as over</button>`) : ''}
    ${ROLE === 'phone' ? `<button class="link" data-a="sickdel">Delete this entry</button>` : ''}`);
 }
@@ -435,7 +435,7 @@ export function buyHtml(doc, admin) {
   ${low.length ? `<h2>💊 Running low</h2><div class="card">${low.map(r => `<button class="check" data-a="buy" data-id="${r.m.id}"><span class="box" style="border-color:var(--bad)">!</span><span class="tx"><b>${esc(r.m.name)}</b> · ${r.dl.days === 0 ? 'out today' : pl(r.dl.days, 'day') + ' left'}<small>${esc(C.buyAdvice(r, p, x => money(doc, x)))} Tap when bought.</small></span></button>`).join('')}</div>` : ''}
   <h2>📝 To buy</h2><div class="card">${open.map(s => `<div class="row"><button class="check" data-a="shop" data-id="${s.id}"><span class="box">✓</span><span class="tx">${KICON[s.kind] || '🛍️'} ${esc(s.text)}<small>${s.why ? 'For ' + esc(s.why) + ' · ' : ''}${s.by === 'admin' ? 'added by ' + esc(who) + ' · ' : ''}${ago(s.add)}</small></span></button><button class="btn ghost" style="padding:4px 10px" data-a="delshop" data-id="${s.id}" aria-label="Remove">✕</button></div>`).join('') || '<p class="mini" style="margin:0">Empty. Add something below.</p>'}
    <div class="opt" style="margin-top:12px">${Object.entries(KICON).map(([k, i]) => `<button class="${KINDSEL === k ? 'on' : ''}" data-a="kind" data-k="${k}">${i} ${{ med: 'Medicine', food: 'Food', drink: 'Drink', other: 'Other' }[k]}</button>`).join('')}</div>
-   <div class="add" style="margin-top:8px"><input type="text" id="newitem" placeholder="Add an item…"><button class="btn" data-a="additem">Add</button></div></div>
+   <div class="add" style="margin-top:8px"><input type="text" id="newitem" placeholder="e.g. Biogesic, bananas, Pocari"><button class="btn" data-a="additem">Add</button></div></div>
   ${done.length ? `<details class="sec card"><summary><b>✅ Bought recently</b></summary><div>${done.map(s => `<button class="check on" data-a="shop" data-id="${s.id}"><span class="box">✓</span><span class="tx">${KICON[s.kind] || '🛍️'} ${esc(s.text)}<small>${ago(s.done)} · tap to undo</small></span></button>`).join('')}</div></details>` : ''}
   <p class="mini">${admin ? 'He gets a reminder 1 hour after you add items, and every evening until they\'re ticked off.' : `I'll remind you about new items in 1 hour, and every evening until they're ticked off. ${esc(who)} can see this list.`}</p>`;
 }
