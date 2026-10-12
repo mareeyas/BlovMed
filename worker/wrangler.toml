@@ -8,3 +8,10 @@ crons = ["* * * * *"]
 [[kv_namespaces]]
 binding = "KV"
 id = "88ab0a3b05854543aed4775fae5a920e"
+[[durable_objects.bindings]]
+name = "PROF"
+class_name = "Prof"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Prof"]
