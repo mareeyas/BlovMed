@@ -179,14 +179,14 @@ const isShip = () => veh().kind === 'ship';
 const carSVG = () => veh().draw(COLORS[vehCol()] || COLORS[0]);
 function sceneHtml(all) {
   if (!L.set.game) return '';
-  const ship = isShip(), n = today(), ds = all || todayDoses(n), nxt = ds.find(d => !d.at);
-  const posts = ds.map((d, i) => { const s = d.at ? 'done' : d === nxt ? 'next' : status(d, n) === 'overdue' ? 'late' : '';
-    return `<div class="post ${s}" data-i="${i}" data-a="dd" data-k="${d.key}"><b>${C.fmtT(d.t).replace(':00', '').replace(' ', '')}</b><i>${d.at ? '✅' : i === ds.length - 1 ? (ship ? '🏝️' : '🏁') : ship ? '🛟' : '🚩'}</i></div>`; }).join('');
+  const ship = isShip(), n = today(), ds = all || todayDoses(n), k = ds.filter(d => d.at).length, late = ds.some(d => !d.at && status(d, n) === 'overdue');
+  const posts = ds.map((d, i) => { const s = i < k ? 'done' : i === k ? (late ? 'late next' : 'next') : '';
+    return `<div class="post ${s}" data-i="${i}"><b>${i < k ? '✓' : C.fmtT(d.t).replace(':00', '').replace(' ', '')}</b><i>${i < k ? '✅' : i === ds.length - 1 ? (ship ? '🏝️' : '🏁') : ship ? '🛟' : '🚩'}</i></div>`; }).join('');
   return `<div class="scene ${ship ? 'sea' : ''}" data-a="car" aria-label="Tap to honk">${ship ? '<div class="water"></div>' : '<div class="road"></div>'}<div class="lines"></div><span class="speedo" style="opacity:0"></span>${posts || `<div class="flag">${ship ? '🏝️' : '🏁'}</div>`}<div class="car idle">${carSVG()}</div></div>`;
 }
 function placeCar() {
   const c = $('.car'), sc = $('.scene'); if (!c || !sc) return;
-  const n = today(), ds = todayDoses(n), xs = postXs(sc, c.offsetWidth, ds, n), posts = document.querySelectorAll('.post');
+  const n = today(), ds = todayDoses(n), xs = postXs(sc, c.offsetWidth, ds), posts = document.querySelectorAll('.post');
   const tight = xs.some((x, i) => i && x - xs[i - 1] < 54);
   posts.forEach(p => { const i = +p.dataset.i; p.style.left = xs[i] + 'px'; p.classList.toggle('alt', tight && i % 2 === 1); });
   const k = reached();
@@ -197,7 +197,7 @@ function puff(x) { const sc = $('.scene'); if (!sc) return; const d = document.c
 function speedo(peak, ms) { const el = $('.speedo'); if (!el) return; const t0 = performance.now(); const f = now => { const k = Math.min(1, (now - t0) / ms), v = Math.round(peak * Math.sin(Math.PI * k)); el.textContent = v + (isShip() ? ' knots' : ' km/h'); el.style.opacity = k < 1 ? 1 : 0; if (k < 1) requestAnimationFrame(f); }; requestAnimationFrame(f); }
 function drive(k0, k1, win) {
   const sc = $('.scene'), car = $('.car'); if (!sc || !car) return;
-  const ds = todayDoses(today()), xs = postXs(sc, car.offsetWidth, ds, today()), cw = car.offsetWidth;
+  const ds = todayDoses(today()), xs = postXs(sc, car.offsetWidth, ds), cw = car.offsetWidth;
   const at = k => k <= 0 ? 8 : xs[k - 1] - cw + 2, ship = isShip();
   const S = Math.max(1, k1 - k0), seg = reduce ? 250 : (ship ? 1100 : 900), dur = S * seg;
   animUntil = Date.now() + dur + (win ? 1600 : 250);
@@ -229,19 +229,14 @@ function drive(k0, k1, win) {
 function confetti(sc, x) {
   for (let i = 0; i < 12; i++) { const b = document.createElement('div'); b.className = 'boom'; b.textContent = ['🎉', '✨', '🏆', '💖'][i % 4]; b.style.left = x + 'px'; b.style.bottom = '50px'; b.style.setProperty('--dx', (Math.random() * 180 - 90) + 'px'); b.style.setProperty('--dy', (-30 - Math.random() * 60) + 'px'); b.style.setProperty('--r', (Math.random() * 90 - 45) + 'deg'); sc.appendChild(b); setTimeout(() => b.remove(), 1150); }
 }
-// Flags sit along the road by time of day (morning left, night right), in order, never overlapping.
-function postXs(sc, cw, ds, n) {
-  const W = sc.clientWidth, L0 = cw + 22, R0 = W - 30, N = ds.length; if (!N) return [];
-  const m = ds.map(d => C.mins(d.t) - (d.d < n.ymd ? 1440 : 0));
-  const lo = Math.min(360, m[0]), hi = Math.max(1320, m[N - 1]), gap = Math.min(46, N > 1 ? (R0 - L0) / (N - 1) : 46);
-  const xs = m.map(v => L0 + (R0 - L0) * (v - lo) / Math.max(1, hi - lo));
-  for (let i = 1; i < N; i++) xs[i] = Math.max(xs[i], xs[i - 1] + gap);
-  for (let i = N - 1; i >= 0; i--) xs[i] = Math.min(xs[i], i === N - 1 ? R0 : xs[i + 1] - gap);
-  for (let i = 0; i < N; i++) xs[i] = Math.max(xs[i], i ? xs[i - 1] + gap : L0);
-  return xs;
+// Flags are spread evenly along the whole road, one per dose, in time order.
+function postXs(sc, cw, ds) {
+  const N = ds.length; if (!N) return [];
+  const S = cw + 10, R0 = sc.clientWidth - 30;
+  return ds.map((_, i) => S + (R0 - S) * (i + 1) / N);
 }
-// How far the car may go: up to the last flag in an unbroken run of taken doses from the first one.
-const reached = () => { const ds = todayDoses(today()); let k = 0; while (k < ds.length && ds[k].at) k++; return k; };
+// Every dose he logs (in any order) moves the car exactly one flag forward.
+const reached = () => todayDoses(today()).filter(d => d.at).length;
 function honk() { const sc = $('.scene'), car = $('.car'); if (!sc || !car || busy()) return; if (isShip()) shipHorn(0); else sfx.honk(); buzz(30); const x = carPos(); car.animate([{ transform: `translateX(${x}px)` }, { transform: `translateX(${x}px) translateY(-10px)` }, { transform: `translateX(${x}px)` }], { duration: 350 }); const h = document.createElement('div'); h.className = 'honk'; h.textContent = isShip() ? 'Hoooonk!' : 'Beep beep!'; h.style.left = (x + 50) + 'px'; sc.appendChild(h); setTimeout(() => h.remove(), 900); }
 
 /* ---------- taking doses ---------- */
@@ -261,7 +256,6 @@ async function take(key) {
   heroLock = ts + hold; persist(); U.closeSheet(); render();
   sfx.take(); buzz([40, 40, 60]); pop('+10');
   if (L.set.game && hops) drive(k0, k1, win);
-  else if (L.set.game && k1 < all.length) { const w = all[k1]; setTimeout(() => toast(`Logged ✓ Your ${isShip() ? 'ship' : 'car'} waits at the ${C.fmtT(w.t)} flag until you take that one.`), 400); }
   if (win) setTimeout(() => { sfx.win(); buzz([60, 50, 60, 50, 120]); pop('All done! 🏁'); }, hold - 1700);
   setTimeout(render, hold + 60); queueSync();
 }
@@ -318,7 +312,7 @@ function viewToday() {
   return `<h1>${name ? 'Hi ' + esc(name) + ' 👋' : 'Today'}</h1>
   <div class="chips"><button data-a="stars">⭐ ${st.pts}</button><button data-a="streak">🔥 ${st.streak}</button><button data-a="level">Lv ${st.lvl} · ${st.title}</button>${set.game ? '<button data-a="garage" aria-label="Garage">🚗</button>' : ''}</div>
   ${sceneHtml(all)}<p class="status">${line}</p>
-  ${!L.set.tip1 && all.length ? `<div class="coach"><span>👋 <b>This is your race for today.</b> Each flag is a dose, in time order. After you take one, tap <b>Take</b> and your ${isShip() ? 'ship sails' : 'car drives'} to the next flag. Reach the finish to win the day!</span><button class="mini-btn" data-a="tipok">Got it</button></div>` : ''}
+  ${!L.set.tip1 && all.length ? `<div class="coach"><span>👋 <b>This is your race for today.</b> Each flag is one dose. Take them in any order: every time you tap <b>Take</b>, your ${isShip() ? 'ship sails' : 'car drives'} to the next flag. Reach the finish to win the day!</span><button class="mini-btn" data-a="tipok">Got it</button></div>` : ''}
   ${all.length ? `<div class="list">${all.map(d => doseRow(d, n, d === nxt)).join('')}</div>` : ''}
   ${streakHint(st)}${pushBanner()}${activeSick()}${buyLink(n)}${prnHtml()}`;
 }
