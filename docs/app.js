@@ -1,15 +1,18 @@
 // BlovMed phone app.
 import * as C from './core.js';
 import * as U from './ui.js';
-const { $, esc, today, toast, pl } = U;
+import { CAR_MODELS, COLORS, COLOR_NAMES, carById } from './cars.js';
+const { $, esc, today, toast, pl, ask, say } = U;
 
 const CFG = window.CFG || {};
 const WORKER = CFG.worker && !/YOUR_/.test(CFG.worker) ? CFG.worker.replace(/\/$/, '') : '';
 const LK = 'blovmed.v2', OLD = 'medmate.v1';
-const DEFSET = { accent: 0, car: 0, mode: 'auto', big: false, sound: true, haptics: true, game: true };
+const DEFSET = { accent: 0, car: 0, model: 'bubble', mode: 'auto', big: false, sound: true, haptics: true, game: true, guided: false, installSkip: false };
 const ACC = [['#E8559B', '#FF86BC'], ['#D81B76', '#FF5CA8'], ['#F0728A', '#FF9DB0'], ['#B65FD1', '#D79BF0']], ACCN = ['Bubblegum', 'Hot pink', 'Peach', 'Lavender'];
-const CARS = ['#E8559B', '#D62839', '#2E7D32', '#1E5BD8', '#F4B400', '#7B3FE4'], CARN = ['Pink', 'Red', 'Green', 'Blue', 'Yellow', 'Purple'];
-const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const inAppBrowser = /FBAN|FBAV|FB_IAB|Messenger|Instagram|Line\/|MicroMessenger|TikTok/i.test(navigator.userAgent);
+let installEvt = null; window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
 
 /* ---------- storage (moves old data over automatically) ---------- */
 let L = load();
@@ -45,6 +48,7 @@ let syncT, syncing = false, again = false;
 const queueSync = (d = 800) => { clearTimeout(syncT); syncT = setTimeout(sync, d); };
 async function sync() {
   if (!WORKER || L.moved) return;
+  if (!L.dev && isIOS && !standalone) return; // don't create a profile from a Safari tab; the Home Screen app does that
   if (syncing) { again = true; return; }
   syncing = true;
   try {
@@ -63,6 +67,22 @@ async function sync() {
 async function api(path, body) {
   const r = await fetch(WORKER + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'failed'); return j;
+}
+
+/* ---------- gift links (#gift=CODE) and codes ---------- */
+const giftCode = ((location.hash.match(/gift=([A-Za-z0-9-]+)/) || [])[1] || '').toUpperCase();
+async function claimCode(code, isGift) {
+  try {
+    const j = await api('/p/claim', { code });
+    if (j.role !== 'phone') { say('Wrong code', 'That code is for the back office page, not for this app.', '🔑'); return false; }
+    L.dev = { pid: j.pid, key: j.key }; L.doc = C.merge(C.newDoc(), j.doc); L.meta = j.meta; L.moved = false; delete L.pendingGift;
+    if (isGift) { L.set.guided = false; gs = 0; }
+    persist(); history.replaceState(null, '', location.pathname); await sync(); render();
+    toast(isGift ? 'Your gift is ready 🎁' : 'Your data is back 🎉'); return true;
+  } catch (e) {
+    if (isGift && L.dev && (L.doc.cfg.gift || C.medList(L.doc).length)) { history.replaceState(null, '', location.pathname); return false; } // already opened before
+    say(isGift ? 'This gift link was already used' : 'That code did not work', isGift ? 'Ask for a new link, or just continue. You can add your medicines yourself.' : 'Codes work once and expire. Ask for a new one.', '🔑'); return false;
+  }
 }
 
 /* ---------- push reminders, with a health check every time the app opens ---------- */
@@ -89,14 +109,14 @@ async function resubscribe() {
   catch (e) { pushState = 'broken'; render(); }
 }
 async function enablePush() {
-  if (!WORKER) return alert('The app is not set up yet (config.js).');
-  if (!canPush()) return alert(isIOS ? 'On iPhone: tap Share, then Add to Home Screen. Open BlovMed from the new icon and try again.' : 'This browser cannot show reminders. Try Chrome.');
+  if (!WORKER) return say('Not set up yet', 'The app needs config.js filled in first.', '⚙️');
+  if (!canPush()) return say('One step first', isIOS ? 'Add BlovMed to your Home Screen (Share → Add to Home Screen), then open it from the new icon and try again.' : 'This browser cannot show reminders. Try Chrome.', '📲');
   try {
     const perm = await Notification.requestPermission();
-    if (perm !== 'granted') return alert(isIOS ? 'Reminders are blocked. Open iPhone Settings > Notifications > BlovMed and turn on Allow Notifications.' : 'Reminders are blocked. Allow notifications for this app in your phone settings.');
+    if (perm !== 'granted') return say('Reminders are blocked', isIOS ? 'Open iPhone Settings → Notifications → BlovMed and turn on Allow Notifications.' : 'Allow notifications for BlovMed in your phone settings.', '🔕');
     const reg = await navigator.serviceWorker.ready; const s = await reg.pushManager.getSubscription();
-    L.sub = s ? s.toJSON() : await subscribe(reg); pushState = 'on'; persist(); await sync(); render(); toast('Reminders are on 🔔');
-  } catch (e) { alert('Could not turn on reminders: ' + e.message); }
+    L.sub = s ? s.toJSON() : await subscribe(reg); pushState = 'on'; persist(); await sync(); render(); toast('Reminders are on 🔔'); return true;
+  } catch (e) { say('Could not turn on reminders', esc(e.message), '😕'); }
 }
 
 /* ---------- sound + haptics ---------- */
@@ -120,9 +140,9 @@ function pop(t) { const d = document.createElement('div'); d.className = 'pop'; 
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let animUntil = 0, heroLock = 0;
 const busy = () => Date.now() < animUntil || Date.now() < heroLock;
-const carSVG = c => `<svg viewBox="0 0 120 60"><rect x="8" y="26" width="104" height="22" rx="9" fill="${c}"/><path d="M30 27 L38 11 H82 L92 27Z" fill="${c}"/><rect x="35" y="7" width="50" height="6" rx="3" fill="#fff"/><path d="M39 25 L44 15 H58 V25Z" fill="#CFE9FF"/><path d="M62 25 V15 H79 L85 25Z" fill="#CFE9FF"/><rect x="58" y="30" width="2" height="12" fill="rgba(0,0,0,.18)"/><rect x="18" y="31" width="5" height="3" rx="1" fill="#fff" opacity=".7"/><circle cx="106" cy="36" r="5.5" fill="#FFF3B0" stroke="#fff" stroke-width="2"/><rect x="8" y="33" width="5" height="7" rx="2" fill="#FF5A5A"/><rect x="100" y="43" width="12" height="4" rx="2" fill="#E8E8E8"/><circle cx="34" cy="49" r="9" fill="#2A2A2A"/><circle cx="34" cy="49" r="4" fill="#CCC"/><circle cx="88" cy="49" r="9" fill="#2A2A2A"/><circle cx="88" cy="49" r="4" fill="#CCC"/></svg>`;
 const carX = p => { const sc = $('.scene'); return sc ? 8 + (sc.clientWidth - 130) * p : 0; };
 const prog = () => { const ds = C.dosesOn(L.doc, today().ymd); return ds.length ? ds.filter(d => d.at).length / ds.length : 0; };
+const carSVG = () => carById(L.set.model).draw(COLORS[L.set.car] || COLORS[0]);
 function placeCar() { const c = $('.car'); if (c && !busy()) c.style.transform = `translateX(${carX(prog())}px)`; }
 function carPos() { const sc = $('.scene'), c = $('.car'); return c.getBoundingClientRect().left - sc.getBoundingClientRect().left; }
 function puff(x) { const sc = $('.scene'); if (!sc) return; const d = document.createElement('div'); d.className = 'smoke'; d.style.left = (x - 6 + Math.random() * 10) + 'px'; d.style.bottom = (18 + Math.random() * 8) + 'px'; sc.appendChild(d); setTimeout(() => d.remove(), 950); }
@@ -157,11 +177,12 @@ function honk() { const sc = $('.scene'), car = $('.car'); if (!sc || !car || bu
 
 /* ---------- taking doses ---------- */
 const now = () => Date.now();
-function take(key) {
+async function take(key) {
   const D = L.doc, [d, id, t] = key.split('|'), m = D.meds[id]; if (!m || C.takenAt(D, key) || busy()) return;
   const n = today();
-  if (d === n.ymd && C.mins(t) - n.min > 60 && !confirm(`This dose is for ${C.fmtT(t)}. Did you take it now?`)) return;
-  if (m.maxDay || m.minGap) { const g = U.guard(D, m); if (g && !confirm(g + '\n\nOnly press OK if your doctor told you to.')) return; }
+  if (d === n.ymd && C.mins(t) - n.min > 60 && !(await ask({ icon: '⏰', title: 'Taking it early?', text: `This dose of ${esc(m.name)} is for <b>${C.fmtT(t)}</b>. Only log it if you really took it just now.`, ok: 'Yes, I took it', cancel: 'Not yet' }))) return;
+  if ((m.maxDay || m.minGap) && !(await guardOK(D, m))) return;
+  if (C.takenAt(D, key) || busy()) return;
   const p0 = prog(), ts = now();
   D.log[key] = { t: ts, p: m.perDose, u: ts };
   if (D.snz[key]) D.snz[key] = { until: 0, u: ts };
@@ -173,6 +194,7 @@ function take(key) {
   if (win) setTimeout(() => { sfx.win(); buzz([60, 50, 60, 50, 120]); pop('All done! 🏁'); }, 1700);
   setTimeout(render, hold + 60); queueSync();
 }
+async function guardOK(D, m) { const g = U.guard(D, m); return !g || ask({ icon: '✋', title: 'Wait a moment', text: esc(g) + '<br><br>Only continue if your doctor told you to.', ok: 'Doctor said OK', cancel: 'Don\'t take it', danger: true }); }
 function undo(key) { const D = L.doc, e = D.log[key]; if (!e) return; D.log[key] = { ...e, t: 0, u: now() }; sfx.undo(); buzz(20); U.closeSheet(); save(); }
 function snooze(key) { L.doc.snz[key] = { until: now() + 10 * 6e4, u: now() }; buzz(20); toast('Okay! I will remind you in 10 minutes ⏰'); U.closeSheet(); save(); }
 
@@ -199,7 +221,7 @@ function prnHtml() {
 }
 function viewToday() {
   const D = L.doc, n = today(), ds = C.dosesOn(D, n.ymd), st = C.stats(D, n.ymd), name = D.cfg.name, set = L.set;
-  if (!C.medList(D).length) return `<h1>Welcome${name ? ', ' + esc(name) : ''} 💖</h1><p class="sub">Let's add your first medicine. It takes under a minute.</p><button class="btn full big" data-a="new">Add my first medicine</button>${pushBanner()}`;
+  if (!C.medList(D).length) return `<h1>Hi${name ? ' ' + esc(name) : ''} 💖</h1><p class="sub">Let's add your first medicine. It takes under a minute.</p>${set.game ? `<div class="scene" data-a="car"><div class="road"></div><div class="lines"></div><span class="speedo" style="opacity:0"></span><div class="flag">🏁</div><div class="car idle">${carSVG()}</div></div>` : ''}<button class="btn full big" data-a="new">+ Add my first medicine</button>${pushBanner()}`;
   const all = [...lastNight(n), ...ds], done = ds.filter(d => d.at).length;
   const act = all.find(d => !d.at && status(d, n) !== 'upcoming'), nxt = all.find(d => !d.at);
   let hero;
@@ -212,13 +234,18 @@ function viewToday() {
     hero = `<div class="hero ${late && !snoozed ? 'late' : ''}"><small>${label}</small><b>${esc(d.m.name)}${d.m.perDose > 1 ? ' ×' + d.m.perDose : ''}</b>
      <span class="meta">${pl(d.m.perDose, 'pill')} · ${C.fmtT(d.t)}${d.m.notes ? ' · ' + esc(d.m.notes) : ''}</span>
      <button data-a="tk" data-k="${d.key}">${act ? 'I took it ✓' : 'I took it early'}</button>
-     <div class="two" style="margin-top:8px">${act ? `<button class="ghost" data-a="snz" data-k="${d.key}">⏰ 10 min</button>` : '<span></span>'}<button class="ghost" data-a="dd" data-k="${d.key}">Details</button></div></div>`;
+     ${act ? `<div class="two" style="margin-top:8px"><button class="ghost" data-a="snz" data-k="${d.key}">⏰ 10 min</button><button class="ghost" data-a="dd" data-k="${d.key}">Details</button></div>` : `<button class="ghost" style="margin-top:8px" data-a="dd" data-k="${d.key}">Details</button>`}</div>`;
   }
-  const scene = set.game ? `<div class="scene" data-a="car" aria-label="Your car. Tap to honk."><div class="road"></div><div class="lines"></div><span class="speedo" style="opacity:0">0 km/h</span><div class="flag">🏁</div><div class="car idle">${carSVG(CARS[set.car])}</div></div>` : '';
+  const scene = set.game ? `<div class="scene" data-a="car" aria-label="Your car. Tap to honk."><div class="road"></div><div class="lines"></div><span class="speedo" style="opacity:0">0 km/h</span><div class="flag">🏁</div><div class="car idle">${carSVG()}</div></div>` : '';
   return `<h1>${name ? 'Hi ' + esc(name) + ' 👋' : 'Today'}</h1>
-  <div class="chips"><span>⭐ ${st.pts}</span><span>🔥 ${pl(st.streak, 'day')}</span><span>Lv ${st.lvl} · ${st.title}</span></div>
-  ${scene}${hero}${pushBanner()}${movedBanner()}${shopCard(n)}${prnHtml()}
+  <div class="chips"><button data-a="howto">⭐ ${st.pts}</button><button data-a="howto">🔥 ${st.streak}</button><button data-a="howto">Lv ${st.lvl} · ${st.title}</button>${set.game ? '<button data-a="garage" aria-label="Garage">🚗</button>' : ''}</div>
+  <button class="lvl" data-a="howto" style="display:block;width:100%;border:0;padding:0" aria-label="Level progress"><b style="width:${Math.round(st.into / C.PER_LEVEL * 100)}%"></b></button>
+  ${scene}${hero}${streakHint(st)}${pushBanner()}${movedBanner()}${shopCard(n)}${prnHtml()}
   ${all.length ? '<h2>Today\'s doses</h2>' : ''}${all.map(d => { const s = status(d, n); return `<button class="dose ${s}" data-a="dd" data-k="${d.key}"><span class="t">${C.fmtT(d.t)}</span><span class="n">${esc(d.m.name)}<span>${d.at ? 'Taken ' + U.tm(d.at) : pl(d.m.perDose, 'pill') + (d.m.notes ? ' · ' + esc(d.m.notes) : '')}</span>${d.d < n.ymd ? '<em>From last night</em>' : ''}</span><span class="c">✓</span></button>`; }).join('')}`;
+}
+function streakHint(st) {
+  if (!st.todayTotal || !st.left || now() < heroLock) return '';
+  return `<p class="mini" style="margin:-6px 0 10px;text-align:center">${st.left === 1 ? 'One more dose today' : st.left + ' more doses today'} to ${st.streak ? 'keep your 🔥 ' + st.streak + '-day streak' : 'start a 🔥 streak'} and earn +20 ⭐</p>`;
 }
 function movedBanner() { return L.moved ? `<button class="alert bad" data-a="reconnect"><i>⚠️</i><span>This phone is no longer linked<small>BlovMed was moved to another phone or reset. Tap to reconnect this phone (your data stays).</small></span></button>` : ''; }
 function doseSheet(key) {
@@ -249,40 +276,132 @@ function viewMeds() {
 
 /* ---------- Sick ---------- */
 let sx = null, pick = {};
+const KIND = { med: '💊', food: '🍌', drink: '🥤', other: '🩹' };
+const myLibMed = id => { const n = U.lib(L.doc, id).n; return C.medList(L.doc).find(m => m.lib === id || m.name === n || m.name === U.LIB[id].n); };
 function medCard(id) {
-  const D = L.doc, L0 = U.LIB[id], pr = (D.cfg.libPrice || {})[id] || 0, c = L0.course, n = U.libPills(id);
-  return `<div class="card"><b>${L0.n}</b><p style="margin:6px 0">${L0.per}.</p><p class="sub" style="margin:0 0 10px;font-size:15px">${L0.lim}</p>
-  <label style="margin-top:0">Price per ${L0.unit || 'pill'} at your pharmacy (${esc(D.cfg.cur)})</label><input type="number" min="0" step="0.01" data-s="lp:${id}" value="${pr || ''}" placeholder="e.g. 2.50">
-  <p style="margin:10px 0" class="mini">${pr ? `1 ${L0.unit || 'pill'} ≈ <b>${U.money(D, pr)}</b>${c ? ` · ${L0.days}-day plan: ${n} pcs ≈ <b>${U.money(D, n * pr)}</b>` : ''}` : 'Type the price to see the cost.'}</p>
-  <button class="btn full" data-a="mk" data-id="${id}" data-m="prn">Add: take only when needed</button>
-  ${c ? `<button class="btn ghost full" style="margin-top:8px" data-a="mk" data-id="${id}" data-m="course">Add a ${L0.days}-day plan</button>` : ''}</div>`;
+  const D = L.doc, L0 = U.lib(D, id), pr = (D.cfg.libPrice || {})[id] || 0, c = L0.course, n = U.libPills(id), mine = myLibMed(id), unit = L0.unit || 'pill';
+  return `<div class="card"><div class="row"><b>${esc(L0.n)}</b><button class="btn ghost" style="padding:4px 10px;font-size:13px" data-a="libedit" data-id="${id}">✏️ Edit</button></div>
+  <p style="margin:6px 0;font-size:15px">${esc(L0.how || L0.per)}.</p>${L0.mynote ? `<p class="mini" style="margin:0 0 6px">📝 ${esc(L0.mynote)}</p>` : ''}
+  <p class="mini" style="margin:0 0 8px">⚠️ ${U.LIB[id].lim}</p>
+  <p class="mini" style="margin:0 0 10px">${pr ? `1 ${unit} ≈ <b>${U.money(D, pr)}</b>${c ? ` · ${L0.days}-day plan: ${n} pcs ≈ <b>${U.money(D, n * pr)}</b>` : ''}` : 'Tap Edit to add your pharmacy price.'}</p>
+  ${mine ? `<button class="alert ok" data-a="med" data-id="${mine.id}"><i>✅</i><span>In your medicines<small>${pl(C.stockOf(D, mine), unit)} left. Tap for details.</small></span></button>`
+    : `<button class="btn full" data-a="mk" data-id="${id}" data-m="prn">Add to my medicines (when needed)</button>${c ? `<button class="btn ghost full" style="margin-top:8px" data-a="mk" data-id="${id}" data-m="course">Add as a ${L0.days}-day plan</button>` : ''}`}</div>`;
+}
+function libEditSheet(id) {
+  const D = L.doc, L0 = U.lib(D, id), pr = (D.cfg.libPrice || {})[id] || '';
+  U.openSheet(`<h1 style="margin-top:0">✏️ My version</h1><p class="sub">Make it match the medicine you're used to, like your usual brand.</p>
+  <label>Name or brand</label><input type="text" id="le_n" value="${esc(L0.n)}" placeholder="e.g. Biogesic 500 mg">
+  <label>How you take it</label><input type="text" id="le_h" value="${esc(L0.how || L0.per)}">
+  <label>Price per ${L0.unit || 'pill'} (${esc(D.cfg.cur)})</label><input type="number" min="0" step="0.01" id="le_p" value="${pr}" placeholder="e.g. 2.50">
+  <label>My note <span class="mini">(optional)</span></label><input type="text" id="le_note" value="${esc(L0.mynote || '')}" placeholder="e.g. Works best after eating">
+  <div class="alert"><i>🔒</i><span>Safety limit stays the same<small>${U.LIB[id].lim}</small></span></div>
+  <button class="btn full big" data-a="lesave" data-id="${id}">Save</button>
+  ${D.cfg.libOv && D.cfg.libOv[id] ? `<button class="btn ghost full" style="margin-top:8px" data-a="lereset" data-id="${id}">Go back to the default info</button>` : ''}`);
+}
+const usualIds = k => { const D = L.doc, set = (D.cfg.symMeds || {})[k]; return (set || U.SYM[k].m.map(id => myLibMed(id)).filter(Boolean).map(m => m.id)).filter(id => D.meds[id] && !D.meds[id].del); };
+function usualHtml(k) {
+  const D = L.doc, ids = usualIds(k);
+  if (!ids.length) return `<button class="alert" data-a="usual"><i>💊</i><span>Have a medicine you usually take for this?<small>Tap to pick it, so it's here next time.</small></span></button>`;
+  return `<h2>💊 Your usual medicine</h2>${ids.map(id => { const m = D.meds[id], n24 = C.pills24(D, m, now());
+    return `<div class="card"><div class="row"><b>${esc(m.name)}</b>${m.maxDay ? `<span class="pill ${n24 >= m.maxDay ? 'bad' : 'ok'}">${n24}/${m.maxDay} in 24h</span>` : ''}</div>${m.notes ? `<p class="mini" style="margin:4px 0 0">${esc(m.notes)}</p>` : ''}
+    <div class="two" style="margin-top:10px">${m.prn ? `<button class="btn" data-a="prn" data-id="${m.id}">I took ${m.perDose}</button>` : `<button class="btn ghost" data-a="med" data-id="${m.id}">Details</button>`}<button class="btn ghost" data-a="med" data-id="${m.id}">Info</button></div></div>`; }).join('')}
+  <button class="link" data-a="usual">Change my usual medicine</button>`;
+}
+function usualSheet() {
+  const D = L.doc, ids = new Set(usualIds(sx)), ms = C.medList(D);
+  U.openSheet(`<h1 style="margin-top:0">${U.SYM[sx].e} Usual medicine</h1><p class="sub">What do you usually take for ${esc(U.SYM[sx].n.toLowerCase())}? Tick one or more.</p>
+  <div class="card">${ms.map(m => `<button class="check ${ids.has(m.id) ? 'on' : ''}" data-a="usualtog" data-id="${m.id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(m.name)}<small>${esc(C.schedText(m))}</small></span></button>`).join('') || '<p class="mini">No medicines yet.</p>'}</div>
+  <button class="btn ghost full" data-a="usualnew">+ Add a new medicine</button><button class="btn full" style="margin-top:8px" data-a="close">Done</button>`);
 }
 function buyList(k) {
   const D = L.doc, x = U.SYM[k], items = [];
-  x.m.forEach(id => {
-    const pr = (D.cfg.libPrice || {})[id] || 0, L0 = U.LIB[id], n = U.libPills(id);
-    const mine = C.medList(D).find(m => m.lib === id || m.name === L0.n), have = mine ? C.stockOf(D, mine) : 0, buy = Math.max(0, n - have);
-    items.push({ k: 'm:' + id, kind: 'med', text: `${L0.n} × ${buy || n}`, have: !buy, sub: !buy ? `You already have ${have}. Enough for a ${L0.days}-day plan.` : (have ? `You have ${have}. ` : '') + (pr ? '≈ ' + U.money(D, buy * pr) : 'Ask the pharmacist first') });
+  x.m.forEach((id, i) => {
+    const pr = (D.cfg.libPrice || {})[id] || 0, L0 = U.lib(D, id), n = U.libPills(id), mine = myLibMed(id), have = mine ? C.stockOf(D, mine) : 0, buy = Math.max(0, n - have);
+    items.push({ k: 'm:' + id, kind: 'med', text: `${L0.n} × ${buy || n}`, have: !buy || i > 0, sub: !buy ? `You already have ${have}. Enough for now.` : (i > 0 ? 'Another option. ' : '') + (have ? `You have ${have}. ` : '') + (pr ? '≈ ' + U.money(D, buy * pr) : 'Ask the pharmacist first') });
   });
-  x.drink.forEach(t => items.push({ k: 'd:' + t, kind: 'drink', text: t }));
-  x.food.forEach(t => items.push({ k: 'f:' + t, kind: 'food', text: t }));
+  (x.drink || []).forEach(t => items.push({ k: 'd:' + t, kind: 'drink', text: t, sub: 'Drink' }));
+  (x.food || []).forEach(t => items.push({ k: 'f:' + t, kind: 'food', text: t, sub: 'Food' }));
+  (x.other || []).forEach(t => items.push({ k: 'o:' + t, kind: 'other', text: t, sub: 'First aid and care' }));
   return items;
 }
 function viewSick() {
   const D = L.doc, helper = D.cfg.helper, linked = L.meta && L.meta.admins > 0;
-  const note = `<div class="alert" style="font-weight:400"><i>ℹ️</i><span>A general label guide for healthy adults, not a diagnosis. You take regular medicines, so ask a pharmacist or your doctor before buying anything new.</span></div>`;
-  if (!sx) return `<h1>I don't feel well</h1><p class="sub">Tap what you feel.</p><div class="two">${Object.entries(U.SYM).map(([k, x]) => `<button class="card sym" data-a="sx" data-k="${k}"><span style="font-size:34px">${x.e}</span><br><b>${x.n}</b></button>`).join('')}</div>${note}`;
+  const note = `<p class="mini" style="margin-top:14px">ℹ️ A general guide for healthy adults, not a diagnosis. You take regular medicines, so check with a pharmacist or your doctor before buying anything new.</p>`;
+  if (!sx) return `<h1>I don't feel well 🤒</h1><p class="sub">Tap what you feel.</p><div class="symgrid">${Object.entries(U.SYM).map(([k, x]) => `<button data-a="sx" data-k="${k}"><i>${x.e}</i>${x.n}</button>`).join('')}</div>${note}`;
   const x = U.SYM[sx], li = a => a.map(i => `<li>${i}</li>`).join(''), items = buyList(sx);
   const recent = C.live(D.sick).find(s => s.sym === sx && now() - s.t < 2 * 36e5);
   const open = new Set(C.live(D.shop).filter(s => !s.done).map(s => s.text));
-  return `<button class="btn ghost" data-a="sx" data-k="">← Back</button><h1>${x.e} ${x.n}</h1>
-  ${recent ? `<div class="alert ok"><i>✅</i><span>Logged ${U.ago(recent.t)}${linked ? `. ${esc(helper || 'Your helper')} can see it.` : '.'}</span></div>` : `<button class="btn full big" data-a="feel">I feel this now</button><p class="mini" style="margin:6px 0 0">${linked ? `Logs it and lets ${esc(helper || 'your helper')} know.` : 'Logs it so you can track how often it happens.'}</p>`}
-  <div class="card" style="border-color:var(--bad);margin-top:14px"><b style="color:var(--bad)">🚑 See a doctor or go to the ER if</b><ul>${li(x.dr)}</ul></div>
-  <h2>🛒 What to buy</h2><div class="card">${items.map(i => { const inList = open.has(i.text), on = inList || (pick[i.k] ?? !i.have); return `<button class="check ${on ? 'on' : ''}" data-a="pk" data-k="${esc(i.k)}" ${inList ? 'disabled' : ''}><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${{ med: '💊', food: '🍌', drink: '🥤' }[i.kind]} ${esc(i.text)}<small>${inList ? 'Already on your list' : i.sub || (i.kind === 'food' ? 'Food' : 'Drink')}</small></span></button>`; }).join('')}
-   <button class="btn full" style="margin-top:12px" data-a="addshop">Add to my shopping list</button><p class="mini" style="margin:8px 0 0">I'll remind you in 1 hour and again at ${C.fmtT(C.pad(D.cfg.shopHour) + ':00')} until you tick them off.</p></div>
-  <h2>💊 Medicine that can help</h2>${x.m.map(medCard).join('')}
-  <h2>🍲 Eat and drink</h2><div class="card"><ul>${li(x.eat)}</ul></div>
-  <h2>🚫 Avoid</h2><div class="card"><ul>${li(x.avoid)}</ul></div>${note}`;
+  return `<button class="back" data-a="sback">← Back</button><h1>${x.e} ${x.n}</h1>
+  ${recent ? `<div class="alert ok"><i>✅</i><span>Logged ${U.ago(recent.t)}${linked ? `. ${esc(helper || 'Your helper')} can see it.` : '.'} Feel better soon 💖</span></div>` : `<button class="btn full" data-a="feel">I feel this now</button><p class="mini" style="margin:6px 0 0;text-align:center">${linked ? `Logs it and lets ${esc(helper || 'your helper')} know.` : 'Logs it so you can see how often it happens.'}</p>`}
+  <div class="card" style="border-color:var(--bad);margin-top:14px;font-size:15px"><b style="color:var(--bad)">🚑 See a doctor if</b><ul>${li(x.dr)}</ul></div>
+  ${usualHtml(sx)}
+  ${items.length ? `<h2>🛒 What to buy</h2><div class="card">${items.map(i => { const inList = open.has(i.text), on = inList || (pick[i.k] ?? !i.have); return `<button class="check ${on ? 'on' : ''}" data-a="pk" data-k="${esc(i.k)}" ${inList ? 'disabled' : ''}><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${KIND[i.kind]} ${esc(i.text)}<small>${inList ? 'Already on your list' : i.sub}</small></span></button>`; }).join('')}
+   <button class="btn full" style="margin-top:12px" data-a="addshop">Add to my shopping list</button><p class="mini" style="margin:8px 0 0">I'll remind you in 1 hour and at ${C.fmtT(C.pad(D.cfg.shopHour) + ':00')} until you tick them off.</p></div>` : ''}
+  <details class="sec card"><summary><b>💊 Medicines that can help</b></summary><div>${x.m.length ? x.m.map(medCard).join('') : '<p class="mini">No over-the-counter medicine suggested here. Ask a pharmacist if you need something.</p>'}</div></details>
+  <details class="sec card"><summary><b>🍲 Eat and do</b></summary><div><ul>${li(x.eat)}</ul></div></details>
+  <details class="sec card"><summary><b>🚫 Avoid</b></summary><div><ul>${li(x.avoid)}</ul></div></details>${note}`;
+}
+
+/* ---------- welcome guide (first open) ---------- */
+let gs = 0;
+const GSTEPS = 6;
+function howHtml() {
+  const st = C.stats(L.doc, today().ymd), idx = C.TITLES.indexOf(st.title);
+  return `<div class="card"><div class="row"><b>Lv ${st.lvl} · ${st.title}</b><span class="mini">${st.toNext} ⭐ to Lv ${st.lvl + 1}</span></div><div class="lvl" style="margin:8px 0 0"><b style="width:${Math.round(st.into / C.PER_LEVEL * 100)}%"></b></div><p class="mini" style="margin:6px 0 0">⭐ ${st.pts} stars · 🔥 ${pl(st.streak, 'day')} streak</p></div>
+  <div class="card"><div class="howrow"><i>💊</i><span><b>+10 ⭐</b><small>Every dose you log</small></span></div>
+   <div class="howrow"><i>🏁</i><span><b>+20 ⭐ bonus</b><small>When every dose of the day is done</small></span></div>
+   <div class="howrow"><i>🔥</i><span><b>Streak</b><small>Days in a row with every dose taken. Days with no doses don't break it.</small></span></div>
+   <div class="howrow"><i>🏆</i><span><b>Level up every ${C.PER_LEVEL} ⭐</b><small>Your driver title changes every 2 levels.</small></span></div></div>
+  <div class="card"><b>Driver titles</b><div class="ttl" style="margin-top:8px">${C.TITLES.map((t, i) => `<span class="${i === idx ? 'on' : ''}">${t}</span>`).join('')}</div></div>
+  <p class="mini">💡 Late is okay. A late dose still counts and keeps your streak. Only a missed one breaks it.</p>`;
+}
+function garageHtml() {
+  return `<div class="garage">${CAR_MODELS.map(m => `<button class="${L.set.model === m.id ? 'on' : ''}" data-a="model" data-v="${m.id}">${m.draw(COLORS[L.set.car] || COLORS[0])}<b>${m.name}</b><span>${m.type}</span></button>`).join('')}</div>
+  <label>Color</label><div class="opt">${COLORS.map((c, i) => `<button class="sw ${L.set.car === i ? 'on' : ''}" style="background:${c}" aria-label="${COLOR_NAMES[i]}" data-a="color" data-v="${i}"></button>`).join('')}</div>`;
+}
+const garageSheet = () => U.openSheet(`<h1 style="margin-top:0">🚗 Garage</h1><p class="sub">Pick your ride. Change it any time.</p>${garageHtml()}<button class="btn full" style="margin-top:16px" data-a="close">Done</button>`);
+const shareIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px"><path d="M12 3v12M7 8l5-5 5 5"/><rect x="4" y="11" width="16" height="10" rx="2"/></svg>';
+function viewInstall() {
+  if (inAppBrowser) return `<div class="guide"><div class="gbody"><div class="gicon">🧭</div><h1>Open in your browser</h1><p class="lead">You opened BlovMed inside another app. Reminders only work from ${isIOS ? 'Safari' : 'Chrome'}.</p>
+   <div class="step"><span class="n">1</span><span><b>Tap the ⋯ or ${shareIcon} button</b><span>Usually at the top or bottom of the screen.</span></span></div>
+   <div class="step"><span class="n">2</span><span><b>Choose "Open in ${isIOS ? 'Safari' : 'Chrome'}" or "Open in browser"</b></span></div>
+   <button class="btn ghost full" data-a="copylink">Or copy the link</button></div><button class="link" data-a="noinstall">Continue here anyway</button></div>`;
+  return `<div class="guide"><div class="gbody"><div class="gicon">📲</div><h1>Add BlovMed to your Home Screen</h1><p class="lead">Takes 20 seconds. It's what lets BlovMed remind you.</p>
+   <div class="step"><span class="n">1</span><span><b>Tap the Share button ${shareIcon}</b><span>At the bottom of Safari (top on iPad).</span></span></div>
+   <div class="step"><span class="n">2</span><span><b>Tap "Add to Home Screen" ➕</b><span>Scroll down a little if you don't see it.</span></span></div>
+   <div class="step"><span class="n">3</span><span><b>Tap "Add"</b><span>Top right corner.</span></span></div>
+   <div class="step"><span class="n">4</span><span><b>Open BlovMed from your Home Screen 💊</b><span>Then this tab can be closed.</span></span></div>
+   ${L.pendingGift ? `<div class="gift" style="text-align:center"><small>🎁 Your gift code</small><b style="font-size:24px;letter-spacing:3px">${esc(L.pendingGift)}</b><br><span class="mini">You'll paste this on the first screen of the app.</span><br><button class="btn" style="margin-top:8px" data-a="copycode">Copy code</button></div>` : ''}</div>
+   <button class="link" data-a="noinstall">I'll do it later</button></div>`;
+}
+function viewGuide() {
+  const D = L.doc, name = D.cfg.name, helper = D.cfg.helper, ms = C.medList(D);
+  const body = [
+    () => `<div class="gicon">💖</div><h1>Welcome${name ? ', ' + esc(name) : ''}!</h1><p class="lead">BlovMed reminds you to take your meds, plans what to buy, and makes it a little game.</p>
+      ${D.cfg.gift ? `<div class="gift"><small>💌 A message from ${esc(helper || 'someone who cares about you')}</small>${esc(D.cfg.gift)}</div>` : ''}
+      <label>What should I call you?</label><input type="text" id="g_name" data-s="name" value="${esc(name)}" placeholder="Your name or nickname">
+      ${WORKER && !ms.length && !D.cfg.gift ? `<details class="sec card" style="margin-top:16px" ${L.pendingGift ? 'open' : ''}><summary><b>🎁 Got a gift code?</b></summary><div><p class="mini" style="margin-top:0">Paste it to load everything that was set up for you.</p><input type="text" id="g_code" placeholder="ABCD-EFGH" autocapitalize="characters" value="${esc(L.pendingGift || '')}"><button class="btn full" style="margin-top:8px" data-a="gclaim">Use code</button></div></details>` : ''}`,
+    () => `<div class="gicon">🗓️</div><h1>How it works</h1><p class="lead">Just 1 tap a dose.</p>
+      <div class="step"><span class="e">🔔</span><span><b>I remind you</b><span>Even when the app is closed.</span></span></div>
+      <div class="step"><span class="e">✅</span><span><b>Tap "I took it"</b><span>One big button. That's it.</span></span></div>
+      <div class="step"><span class="e">🏎️</span><span><b>Your car races and drifts</b><span>Every dose moves you to the finish line.</span></span></div>
+      <div class="step"><span class="e">🛒</span><span><b>Know what to buy</b><span>I warn you before pills run out and plan it around payday.</span></span></div>`,
+    () => `<div class="gicon">⭐</div><h1>Stars and streaks</h1><p class="lead">Keep your streak going to level up.</p>${howHtml()}`,
+    () => `<div class="gicon">🚗</div><h1>Pick your ride</h1><p class="lead">You can change it any time in the Garage.</p>${garageHtml()}`,
+    () => `<div class="gicon">🔔</div><h1>Turn on reminders</h1><p class="lead">This is the most important step.</p>
+      ${pushState === 'on' ? '<div class="alert ok"><i>✅</i><span>Reminders are on. You\'re all set!</span></div>'
+        : !canPush() && isIOS ? `<div class="alert"><i>📲</i><span>Add BlovMed to your Home Screen first<small>Safari: ${shareIcon} Share → Add to Home Screen, then open it from the icon.</small></span></div>`
+        : `<button class="btn full big" data-a="gperm">Turn on reminders</button><p class="mini" style="text-align:center">Tap <b>Allow</b> when your phone asks.</p>`}
+      ${installEvt && !standalone ? '<button class="btn ghost full" style="margin-top:10px" data-a="install">📲 Install BlovMed as an app</button>' : ''}`,
+    () => `<div class="gicon">🏁</div><h1>You're ready${name ? ', ' + esc(name) : ''}!</h1>
+      ${ms.length ? `<p class="lead">Your medicines are already set up:</p><div class="card">${ms.map(m => `<div class="row"><b>💊 ${esc(m.name)}</b><span class="mini">${esc(C.schedText(m).replace(/^Every day at /, ''))}</span></div>`).join('')}</div>` : '<p class="lead">Next, add your first medicine. It takes under a minute.</p>'}
+      <div class="step"><span class="e">🤒</span><span><b>Feeling sick?</b><span>Tap Sick to see what to take, eat and buy.</span></span></div>
+      <div class="step"><span class="e">⚙️</span><span><b>Want to change something?</b><span>Everything is in Settings, including this guide.</span></span></div>`,
+  ][gs]();
+  return `<div class="guide"><div class="gbody">${body}</div>
+   <div class="dots">${Array.from({ length: GSTEPS }, (_, i) => `<i class="${i === gs ? 'on' : ''}"></i>`).join('')}</div>
+   <div class="gnav">${gs ? '<button class="btn ghost" data-a="gback">← Back</button>' : ''}<button class="btn" data-a="${gs === GSTEPS - 1 ? 'gdone' : 'gnext'}">${gs === GSTEPS - 1 ? (ms.length ? "Let's go! 🏎️" : 'Add my first medicine') : 'Next →'}</button></div>
+   ${gs < GSTEPS - 1 ? '<button class="link" data-a="gdone">Skip the guide</button>' : ''}</div>`;
 }
 
 /* ---------- Settings ---------- */
@@ -294,26 +413,35 @@ function viewSettings() {
   return `<h1>Settings</h1>
   <div class="card"><label style="margin-top:0">Your name</label><input type="text" data-s="name" value="${esc(D.cfg.name)}" placeholder="What should I call you?"></div>
   <div class="card"><b>🔔 Reminders</b><div style="margin-top:10px">${pushTxt}</div><div style="margin-top:10px">${tog('nags', 'Nudge me again if I forget', 1)}</div></div>
-  <div class="card"><b>🎨 Look</b><label>Pink style</label><div class="opt">${o('accent', [0, 1, 2, 3], ACCN)}</div>
-  <label>Light or dark</label><div class="opt">${o('mode', ['auto', 'light', 'dark'], ['Auto', 'Light', 'Dark'])}</div><div style="margin-top:12px">${tog('big', 'Bigger text')}</div></div>
+  <details class="sec card"><summary><b>🎨 Look</b></summary><div><label>Pink style</label><div class="opt">${o('accent', [0, 1, 2, 3], ACCN)}</div>
+  <label>Light or dark</label><div class="opt">${o('mode', ['auto', 'light', 'dark'], ['Auto', 'Light', 'Dark'])}</div><div style="margin-top:12px">${tog('big', 'Bigger text')}</div></div></details>
   <div class="card"><b>🏎️ Car game</b><div style="margin-top:8px">${tog('game', 'Show the car')}</div>
-  <label>Car color</label><div class="opt">${CARS.map((c, i) => `<button class="sw ${st.car === i ? 'on' : ''}" style="background:${c}" aria-label="${CARN[i]}" data-a="opt" data-k="car" data-v="${i}"></button>`).join('')}</div>
-  <p class="mini" style="margin:10px 0 0">Every dose = +10 ⭐ and a drift. Finish the day = +20 ⭐ and a victory spin. Tap the car to honk.</p></div>
-  <div class="card"><b>🔊 Sound and feel</b><div style="margin-top:8px">${tog('sound', 'Sounds')}</div><div style="margin-top:8px">${tog('haptics', 'Vibration')}</div>
-  <button class="btn ghost full" style="margin-top:12px" data-a="test">Test sound and vibration</button><p class="mini" style="margin:8px 0 0">Vibration works best on Android. On iPhone it depends on your iOS version.</p></div>
-  <div class="card"><b>💰 Money</b><label>Payday dates</label><div class="two"><input type="number" min="1" max="31" data-s="pd1" value="${D.cfg.paydays[0]}"><input type="number" min="1" max="31" data-s="pd2" value="${D.cfg.paydays[1]}"></div>
-  <label>Currency symbol</label><input type="text" maxlength="3" data-s="cur" value="${esc(D.cfg.cur)}"></div>
-  ${WORKER ? `<div class="card"><b>🤝 Helper (back office)</b>
+  <button class="btn ghost full" style="margin-top:10px" data-a="garage">🚗 Garage: ${carById(st.model).name}</button>
+  <button class="btn ghost full" style="margin-top:8px" data-a="howto">⭐ How stars and streaks work</button></div>
+  <details class="sec card"><summary><b>🔊 Sound and feel</b></summary><div>${tog('sound', 'Sounds')}<div style="margin-top:8px">${tog('haptics', 'Vibration')}</div>
+  <button class="btn ghost full" style="margin-top:12px" data-a="test">Test sound and vibration</button><p class="mini" style="margin:8px 0 0">Vibration works best on Android. On iPhone it depends on your iOS version.</p></div></details>
+  <details class="sec card"><summary><b>💰 Money</b></summary><div><label style="margin-top:0">Payday dates</label><div class="two"><input type="number" min="1" max="31" data-s="pd1" value="${D.cfg.paydays[0]}"><input type="number" min="1" max="31" data-s="pd2" value="${D.cfg.paydays[1]}"></div>
+  <label>Currency symbol</label><input type="text" maxlength="3" data-s="cur" value="${esc(D.cfg.cur)}"></div></details>
+  ${WORKER ? `<details class="sec card"><summary><b>🤝 Helper ${linked ? '· ' + esc(helper) : ''}</b></summary><div>
    ${linked ? `<p style="margin:8px 0">Linked with <b>${esc(helper)}</b>. They can see your doses, medicines, money plan, sick reports and shopping list, and can edit your medicines.</p><button class="btn ghost full" data-a="code">Show a new link code</button><button class="btn red full" style="margin-top:8px" data-a="unlink">Unlink helper</button>`
     : `<p style="margin:8px 0">Let someone you trust help manage your meds from their own phone. They'll see your doses and can update medicines and prices.</p><button class="btn full" data-a="code">Show link code</button>`}
    <details><summary>Moving from another phone?</summary><p class="mini">Ask your helper for a code (Back office → Settings → Link a new phone), then type it here.</p><input type="text" id="joincode" placeholder="ABCD-EFGH" autocapitalize="characters"><button class="btn full" style="margin-top:8px" data-a="join">Restore my data</button></details>
-   <p class="mini" style="margin:10px 0 0">${L.synced ? 'Backed up ' + U.ago(L.synced) : 'Not backed up yet'}</p></div>` : ''}`;
+   <p class="mini" style="margin:10px 0 0">${L.synced ? 'Backed up ' + U.ago(L.synced) : 'Not backed up yet'}</p></div></details>` : ''}
+  <details class="sec card"><summary><b>✨ More</b></summary><div>
+   ${installEvt && !standalone ? '<button class="btn ghost full" style="margin-top:10px" data-a="install">📲 Install BlovMed as an app</button>' : ''}
+   <button class="btn ghost full" style="margin-top:10px" data-a="guide">Show the welcome guide again</button>
+   <button class="btn ghost full" style="margin-top:8px" data-a="reset">Start fresh: reset stars and streak</button></div></details>`;
 }
 
 /* ---------- render ---------- */
 let tab = 'today';
 function render() {
   applyTheme();
+  if (!L.set.guided) {
+    $('#nav').innerHTML = '';
+    $('#app').innerHTML = ((isIOS && !standalone) || inAppBrowser) && !L.set.installSkip ? viewInstall() : viewGuide();
+    return;
+  }
   $('#app').innerHTML = tab === 'today' ? viewToday() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(L.doc, false) : tab === 'sick' ? viewSick() : viewSettings();
   $('#nav').innerHTML = [['today', '🏠', 'Today'], ['meds', '💊', 'Meds'], ['sick', '🤒', 'Sick'], ['money', '💰', 'Money'], ['set', '⚙️', 'Settings']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
   requestAnimationFrame(placeCar);
@@ -324,7 +452,7 @@ function applyTheme() {
   const r = document.documentElement, m = L.set.mode;
   if (m === 'auto') r.removeAttribute('data-theme'); else r.setAttribute('data-theme', m);
   const dark = m === 'dark' || (m === 'auto' && matchMedia('(prefers-color-scheme:dark)').matches);
-  r.style.setProperty('--acc', ACC[L.set.accent][dark ? 1 : 0]); r.style.setProperty('--fs', L.set.big ? '21px' : '18px');
+  r.style.setProperty('--acc', ACC[L.set.accent][dark ? 1 : 0]); r.style.setProperty('--fs', L.set.big ? '18px' : '16px');
 }
 
 /* ---------- events ---------- */
@@ -347,7 +475,43 @@ document.addEventListener('click', async ev => {
   else if (a === 'ctog') { D.cfg = { ...D.cfg, [b.dataset.k]: !D.cfg[b.dataset.k], u: now() }; save(); }
   else if (a === 'opt') { L.set[b.dataset.k] = JSON.parse(b.dataset.v); persist(); render(); }
   else if (a === 'test') { sfx.take(); vroom(); screech(.5); buzz([40, 40, 60]); pop('+10'); }
-  else if (a === 'sx') { sx = b.dataset.k || null; pick = {}; render(); window.scrollTo(0, 0); }
+  else if (a === 'sx') { sx = b.dataset.k || null; pick = {}; if (sx) U.pushView(); render(); window.scrollTo(0, 0); }
+  else if (a === 'sback') U.goBack();
+  else if (a === 'howto') U.openSheet(`<h1 style="margin-top:0">⭐ Stars and streaks</h1>${howHtml()}<button class="btn full" data-a="close">Got it</button>`);
+  else if (a === 'garage') garageSheet();
+  else if (a === 'model' || a === 'color') {
+    if (a === 'model') L.set.model = b.dataset.v; else L.set.car = +b.dataset.v;
+    persist(); sfx.honk(); buzz(20);
+    if (U.sheetOpen()) garageSheet(); else render();
+  }
+  else if (a === 'gnext') { const n = $('#g_name'); if (n && n.value.trim() !== D.cfg.name) D.cfg = { ...D.cfg, name: n.value.trim(), u: now() }; persist(); gs = Math.min(GSTEPS - 1, gs + 1); U.pushView(); sfx.tick(); render(); window.scrollTo(0, 0); }
+  else if (a === 'gback') U.goBack();
+  else if (a === 'gperm') { await enablePush(); render(); }
+  else if (a === 'gdone') {
+    const n = $('#g_name'); if (n && n.value.trim() !== D.cfg.name) D.cfg = { ...D.cfg, name: n.value.trim(), u: now() };
+    L.set.guided = true; gs = 0; tab = 'today'; save(); window.scrollTo(0, 0); sfx.win();
+    if (!C.medList(D).length) setTimeout(() => U.openEditor(CX), 300);
+  }
+  else if (a === 'gclaim') { const c = ($('#g_code').value || '').trim(); if (c) await claimCode(c, true); }
+  else if (a === 'copycode') { try { await navigator.clipboard.writeText(L.pendingGift); toast('Code copied 📋'); } catch (e) { say('Your code', esc(L.pendingGift), '🎁'); } }
+  else if (a === 'guide') { L.set.guided = false; gs = 0; persist(); render(); window.scrollTo(0, 0); }
+  else if (a === 'noinstall') { L.set.installSkip = true; persist(); render(); }
+  else if (a === 'install') { if (installEvt) { installEvt.prompt(); installEvt = null; } }
+  else if (a === 'copylink') { try { await navigator.clipboard.writeText(location.href); toast('Link copied. Paste it in your browser.'); } catch (e) { say('Copy this link', esc(location.href), '🔗'); } }
+  else if (a === 'reset') {
+    if (!(await ask({ icon: '🔄', title: 'Start fresh?', text: 'Your stars, level and streak go back to 0. Your medicines and history stay.', ok: 'Reset', danger: true }))) return;
+    const t = now(); D.cfg = { ...D.cfg, ptsBase: 0, resetAt: t, resetDay: today().ymd, u: t }; save(); toast('Fresh start! 🏁');
+  }
+  else if (a === 'libedit') libEditSheet(b.dataset.id);
+  else if (a === 'lesave' || a === 'lereset') {
+    const id = b.dataset.id, t = now(), ov = { ...(D.cfg.libOv || {}) }, lp = { ...(D.cfg.libPrice || {}) };
+    if (a === 'lereset') delete ov[id];
+    else { const v = x => ($(x).value || '').trim(); ov[id] = { n: v('#le_n') || U.LIB[id].n, how: v('#le_h'), mynote: v('#le_note') }; const p = parseFloat($('#le_p').value); if (p >= 0) lp[id] = p; }
+    D.cfg = { ...D.cfg, libOv: ov, libPrice: lp, u: t }; U.closeSheet(); save(); toast('Saved ✓');
+  }
+  else if (a === 'usual') usualSheet();
+  else if (a === 'usualtog') { const ids = new Set(usualIds(sx)), id = b.dataset.id; ids.has(id) ? ids.delete(id) : ids.add(id); D.cfg = { ...D.cfg, symMeds: { ...(D.cfg.symMeds || {}), [sx]: [...ids] }, u: now() }; persist(); queueSync(); render(); usualSheet(); }
+  else if (a === 'usualnew') U.openEditor(CX, null, { ...U.fromLib(D, U.SYM[sx].m[0] || 'para', 'prn'), name: '', lib: undefined, maxDay: null, maxPer: null, minGap: 0, notes: '' });
   else if (a === 'mk') U.openEditor(CX, null, U.fromLib(D, b.dataset.id, b.dataset.m));
   else if (a === 'pk') { const k = b.dataset.k; const it = buyList(sx).find(i => i.k === k); pick[k] = !(pick[k] ?? !(it && it.have)); sfx.tick(); render(); }
   else if (a === 'feel') { const id = C.rid('k'), t = now(); D.sick[id] = { id, sym: sx, name: U.SYM[sx].n, t, u: t }; buzz(30); save(); toast('Logged. Feel better soon 💖'); }
@@ -360,22 +524,20 @@ document.addEventListener('click', async ev => {
   else if (a === 'shop') { const s = D.shop[b.dataset.id]; if (!s) return; const t = now(); D.shop[s.id] = { ...s, done: s.done ? 0 : t, u: t }; if (!s.done) { sfx.tick(); buzz(25); } save(); }
   else if (a === 'prn') {
     const m = D.meds[b.dataset.id]; if (!m) return;
-    const g = U.guard(D, m); if (g && !confirm(g + '\n\nOnly press OK if your doctor told you to.')) return;
+    if (!(await guardOK(D, m))) return;
     const id = C.rid('r'), t = now(); D.prn[id] = { id: m.id, t, p: m.perDose, u: t }; sfx.take(); buzz(40); save();
   }
   else if (a === 'code') {
-    if (!L.dev) { await sync(); if (!L.dev) return alert('Could not reach the server. Check your internet and try again.'); }
+    if (!L.dev) { await sync(); if (!L.dev) return say('No connection', 'Check your internet and try again.', '📶'); }
     try { const j = await api('/p/code', { pid: L.dev.pid, key: L.dev.key, role: 'phone' });
       U.openSheet(`<h1 style="margin-top:0">Link code</h1><p>On your helper's phone, open <b>${esc(location.origin + location.pathname.replace(/index\.html$/, ''))}admin.html</b> and type this code:</p><div class="code">${j.code}</div><p class="mini">Works once, for 15 minutes. Only share it with someone you trust.</p><button class="btn full" data-a="close">Done</button>`);
-    } catch (e) { alert('Could not get a code. Check your internet.'); }
+    } catch (e) { say('No connection', 'Could not get a code. Check your internet.', '📶'); }
   }
-  else if (a === 'unlink') { if (!confirm('Remove your helper? They will no longer see or edit your meds.')) return; try { const j = await api('/p/unlink', { pid: L.dev.pid, key: L.dev.key, role: 'phone' }); L.meta = j.meta; persist(); render(); toast('Helper removed'); } catch (e) { alert('Could not reach the server.'); } }
+  else if (a === 'unlink') { if (!(await ask({ icon: '🤝', title: 'Remove your helper?', text: 'They will no longer see or edit your meds.', ok: 'Remove', danger: true }))) return; try { const j = await api('/p/unlink', { pid: L.dev.pid, key: L.dev.key, role: 'phone' }); L.meta = j.meta; persist(); render(); toast('Helper removed'); } catch (e) { say('No connection', 'Could not reach the server.', '📶'); } }
   else if (a === 'join') {
     const code = ($('#joincode').value || '').trim(); if (!code) return;
-    if (C.medList(D).length && !confirm('This replaces the medicines on this phone with your saved data. Continue?')) return;
-    try { const j = await api('/p/claim', { code }); if (j.role !== 'phone') return alert('That code is for the back office page, not for this app.');
-      L.dev = { pid: j.pid, key: j.key }; L.doc = C.merge(C.newDoc(), j.doc); L.meta = j.meta; L.moved = false; persist(); await sync(); render(); toast('Your data is back 🎉');
-    } catch (e) { alert('That code did not work. Codes last 15 minutes and work once.'); }
+    if (C.medList(D).length && !(await ask({ icon: '📲', title: 'Restore your data?', text: 'This replaces the medicines on this phone with your saved data.', ok: 'Restore' }))) return;
+    await claimCode(code, false);
   }
   else if (a === 'reconnect') { L.dev = null; L.moved = false; persist(); await sync(); render(); }
 });
@@ -390,6 +552,7 @@ document.addEventListener('change', ev => {
   save();
 });
 document.addEventListener('input', U.uiInput);
+U.onBack(() => { if (!L.set.guided) { if (gs > 0) { gs--; render(); } return; } if (sx) { sx = null; render(); } });
 window.addEventListener('resize', placeCar);
 
 /* ---------- keep fresh ---------- */
@@ -408,4 +571,8 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
   navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !window._reloading) { window._reloading = 1; location.reload(); } });
 }
-render(); persist(); checkPush(); sync();
+if (giftCode) {
+  if (isIOS && !standalone) { L.pendingGift = giftCode; persist(); } // claimed later inside the Home Screen app
+  else claimCode(giftCode, true);
+}
+render(); persist(); checkPush(); if (!giftCode || (isIOS && !standalone)) sync();

@@ -1,7 +1,7 @@
 // BlovMed back office: the helper's page, synced with his phone.
 import * as C from './core.js';
 import * as U from './ui.js';
-const { $, esc, today, toast, pl } = U;
+const { $, esc, today, toast, pl, ask, say } = U;
 
 const CFG = window.CFG || {};
 const WORKER = CFG.worker && !/YOUR_/.test(CFG.worker) ? CFG.worker.replace(/\/$/, '') : '';
@@ -32,7 +32,7 @@ async function sync() {
     delete A.sendSub; A.doc = C.merge(A.doc, j.doc); A.meta = j.meta; A.synced = now(); persist();
     if (!U.sheetOpen() && !typing()) render();
   } catch (e) {
-    if (e.status === 401) { A = null; localStorage.removeItem(AK); render(); alert('This back office was unlinked from his phone. Ask him for a new code.'); }
+    if (e.status === 401) { A = null; localStorage.removeItem(AK); render(); say('This back office was unlinked from his phone. Ask him for a new code.', '', '💬'); }
   } finally { syncing = false; if (again) { again = false; queueSync(200); } }
 }
 const typing = () => document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
@@ -44,21 +44,32 @@ async function checkPush() {
     if (pushOn && A && A.meta && !A.meta.subs.admin) { A.sendSub = s.toJSON(); queueSync(0); } } catch (e) {}
 }
 async function enablePush() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return alert('This browser cannot show alerts. On iPhone, add this page to your Home Screen first.');
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return say('This browser cannot show alerts. On iPhone, add this page to your Home Screen first.', '', '💬');
   try {
-    if (await Notification.requestPermission() !== 'granted') return alert('Alerts were not allowed. Turn on notifications for this site in your phone settings.');
+    if (await Notification.requestPermission() !== 'granted') return say('Alerts were not allowed. Turn on notifications for this site in your phone settings.', '', '💬');
     const reg = await navigator.serviceWorker.ready;
     const s = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(CFG.vapid) });
     A.sendSub = s.toJSON(); pushOn = true; await sync(); render(); toast('Alerts are on for this device 🔔');
-  } catch (e) { alert('Could not turn on alerts: ' + e.message); }
+  } catch (e) { say('Could not turn on alerts', esc(e.message), '😕'); }
 }
 
 /* ---------- views ---------- */
 function viewLogin() {
-  return `<h1>BlovMed back office</h1><p class="sub">Help manage his medicines from your own phone.</p>
-  <div class="card"><b>Link to his app</b><p>On his phone: <b>BlovMed → Settings → Helper → Show link code</b>. Then type the code here.</p>
-  <input type="text" id="code" placeholder="ABCD-EFGH" autocapitalize="characters" autocomplete="off"><button class="btn full big" style="margin-top:10px" data-a="login">Link</button></div>
+  return `<h1>BlovMed back office 💖</h1><p class="sub">Help manage his medicines from your own phone.</p>
+  <div class="card" style="border-color:var(--acc)"><b>🎁 Giving BlovMed as a gift?</b><p class="mini" style="margin:6px 0 10px">Start here. Set up his medicines, prices and a welcome message first, then send him one link. Everything will be ready when he opens it.</p>
+  <button class="btn full big" data-a="create">Start setting up</button></div>
+  <div class="card"><b>Already on his phone?</b><p class="mini" style="margin:6px 0 10px">On his phone: BlovMed → Settings → Helper → Show link code. Type the code here.</p>
+  <input type="text" id="code" placeholder="ABCD-EFGH" autocapitalize="characters" autocomplete="off"><button class="btn ghost full" style="margin-top:10px" data-a="login">Link</button></div>
   ${WORKER ? '' : '<div class="alert bad"><i>⚠️</i><span>config.js is not filled in yet.</span></div>'}`;
+}
+function giftCard() {
+  if (!A.meta || A.meta.phone) return '';
+  const D = A.doc, ms = C.medList(D), ok = x => x ? '✅' : '⬜';
+  return `<div class="card" style="border-color:var(--acc)"><b>🎁 Getting his gift ready</b>
+   <div class="howrow"><i>${ok(D.cfg.name && D.cfg.helper)}</i><span>His name and your name<small>Settings tab</small></span></div>
+   <div class="howrow"><i>${ok(D.cfg.gift)}</i><span>A welcome message <small>Shown first when he opens it (Settings tab)</small></span></div>
+   <div class="howrow"><i>${ok(ms.length)}</i><span>His medicines, times and prices<small>${ms.length ? pl(ms.length, 'medicine') + ' added' : 'Meds tab'}</small></span></div>
+   <button class="btn full" style="margin-top:10px" data-a="giftlink">💌 Create his gift link</button></div>`;
 }
 function alertsHtml(D, n) {
   const out = [], who = D.cfg.name || 'He';
@@ -70,7 +81,7 @@ function alertsHtml(D, n) {
   for (const s of C.live(D.sick).filter(s => now() - s.t < 3 * 864e5).sort((a, b) => b.t - a.t)) out.push(['bad', U.SYM[s.sym] ? U.SYM[s.sym].e : '🤒', `${esc(who)} reported: ${esc(s.name || s.sym)}`, U.fmtDT(s.t) + ' · ' + U.ago(s.t), `data-a="tab" data-k="health"`]);
   const open = C.live(D.shop).filter(s => !s.done);
   if (open.length) out.push(['', '🧺', `${pl(open.length, 'item')} on his shopping list`, open.map(s => esc(s.text)).join(', '), `data-a="tab" data-k="health"`]);
-  if (A.meta && !A.meta.subs.phone) out.push(['bad', '🔕', 'Reminders are off on his phone', 'Ask him to open BlovMed and tap "Turn on phone reminders".', '']);
+  if (A.meta && A.meta.phone && !A.meta.subs.phone) out.push(['bad', '🔕', 'Reminders are off on his phone', 'Ask him to open BlovMed and tap "Turn on phone reminders".', '']);
   if (A.meta && A.meta.seen && A.meta.seen.phone && now() - A.meta.seen.phone > 2 * 864e5) out.push(['', '📵', 'His app hasn\'t synced in a while', 'Last seen ' + U.ago(A.meta.seen.phone) + '. Reminders still work if his phone is online.', '']);
   return out.length ? out.map(([c, i, t, s, at]) => `<button class="alert ${c}" ${at}><i>${i}</i><span>${t}<small>${s}</small></span></button>`).join('') : '<div class="alert ok"><i>✅</i><span>All good right now.</span></div>';
 }
@@ -78,8 +89,8 @@ function viewHome() {
   const D = A.doc, n = today(), ds = C.dosesOn(D, n.ymd), st = C.stats(D, n.ymd), wk = C.week(D, n.ymd), p = C.plan(D, n.ymd), who = D.cfg.name || 'Him';
   const seen = A.meta && A.meta.seen && A.meta.seen.phone;
   const s = d => d.at ? `<span class="pill ok">✓ ${U.tm(d.at)}</span>` : (n.min - C.mins(d.t) >= 30 ? '<span class="pill bad">Not logged</span>' : n.min >= C.mins(d.t) ? '<span class="pill warn">Due now</span>' : '<span class="pill">Later</span>');
-  return `<h1>${esc(who)}'s meds</h1><p class="sub">${seen ? 'His phone synced ' + U.ago(seen) : 'Waiting for his phone to sync'} · <a href="#" data-a="refresh" style="color:var(--acc)">refresh</a></p>
-  <h2>Needs attention</h2>${alertsHtml(D, n)}
+  return `<h1>${esc(who)}'s meds</h1><p class="sub">${seen ? 'His phone synced ' + U.ago(seen) : A.meta && !A.meta.phone ? 'Not on his phone yet' : 'Waiting for his phone to sync'} · <a href="#" data-a="refresh" style="color:var(--acc)">refresh</a></p>
+  ${giftCard()}<h2>Needs attention</h2>${alertsHtml(D, n)}
   <h2>Today · ${ds.filter(d => d.at).length} of ${ds.length} taken</h2>
   <div class="card">${ds.map(d => `<button class="check" data-a="dd" data-k="${d.key}"><span class="tx"><b>${C.fmtT(d.t)}</b> · ${esc(d.m.name)} ×${d.m.perDose}${d.at && C.mins(d.t) ? `<small>${delay(d)}</small>` : ''}</span>${s(d)}</button>`).join('') || '<p class="mini">No scheduled doses today.</p>'}</div>
   <h2>Last 7 days</h2><div class="card"><div class="bars">${wk.map(w => { const pct = w.total ? w.done / w.total : 0; return `<div><b class="${!w.total ? 'none' : pct === 1 ? 'full' : ''}" style="height:${w.total ? Math.max(4, pct * 100) : 4}%"></b>${C.WD[C.wday(w.d)]}</div>`; }).join('')}</div>
@@ -110,7 +121,8 @@ function viewSettings() {
   const D = A.doc, c = D.cfg, num = (k, l, min, max, extra = '') => `<label>${l}</label><input type="number" min="${min}" max="${max}" data-s="${k}" value="${c[k]}" ${extra}>`;
   const opt = (k, vals, labels) => `<div class="opt">${vals.map((v, i) => `<button class="${c[k] === v ? 'on' : ''}" data-a="copt" data-k="${k}" data-v='${JSON.stringify(v)}'>${labels[i]}</button>`).join('')}</div>`;
   return `<h1>Settings</h1>
-  <div class="card"><label style="margin-top:0">His name</label><input type="text" data-s="name" value="${esc(c.name)}"><label>Your name (shown on his phone)</label><input type="text" data-s="helper" value="${esc(c.helper)}" placeholder="e.g. Mary"></div>
+  <div class="card"><label style="margin-top:0">His name</label><input type="text" data-s="name" value="${esc(c.name)}"><label>Your name (shown on his phone)</label><input type="text" data-s="helper" value="${esc(c.helper)}" placeholder="e.g. Mary">
+   <label>💌 Welcome message for him</label><textarea data-s="gift" rows="3" placeholder="Shown on the first screen of his welcome guide">${esc(c.gift || '')}</textarea></div>
   <div class="card"><b>🔔 My alerts (this device)</b><p class="mini">Get told when he misses a dose, runs low, or reports feeling sick.</p>
    ${pushOn && A.meta && A.meta.subs.admin ? '<span class="pill ok">Alerts are on</span>' : '<button class="btn full" data-a="perm">Turn on alerts for me</button>'}
    <label>Tell me when a dose is not logged after</label>${opt('miss', [0, 30, 60, 120], ['Never', '30 min', '1 hour', '2 hours'])}</div>
@@ -120,6 +132,7 @@ function viewSettings() {
   <div class="card"><b>💰 Money</b><label>Paydays</label><div class="two"><input type="number" min="1" max="31" data-s="pd1" value="${c.paydays[0]}"><input type="number" min="1" max="31" data-s="pd2" value="${c.paydays[1]}"></div><label>Currency symbol</label><input type="text" maxlength="3" data-s="cur" value="${esc(c.cur)}"></div>
   <div class="card"><b>📱 His phone</b><p class="mini">Reminders on his phone: <b>${A.meta && A.meta.subs.phone ? 'ON' : 'OFF'}</b>${A.meta && A.meta.tz ? ' · time zone ' + esc(A.meta.tz) : ''}</p>
    <p class="mini">New phone, or he deleted the app? Get a code, then on the new phone: Settings → Helper → Moving from another phone.</p><button class="btn ghost full" data-a="code">Link a new phone</button></div>
+  <div class="card"><b>⭐ Stars and streak</b><p class="mini">${(() => { const st = C.stats(D, today().ymd); return `Now: ⭐ ${st.pts} · Lv ${st.lvl} · 🔥 ${st.streak}`; })()}</p><button class="btn ghost full" data-a="reset">Reset his stars and streak to 0</button></div>
   <button class="btn red full" data-a="logout">Log out of back office</button>
   <p class="mini" style="text-align:center;margin-top:14px">${A.synced ? 'Synced ' + U.ago(A.synced) : ''}</p>`;
 }
@@ -144,9 +157,15 @@ document.addEventListener('click', async ev => {
   if (A && U.uiClick(a, b)) return;
   if (a === 'login') {
     const code = ($('#code').value || '').trim(); if (!code) return;
-    try { const j = await api('/p/claim', { code }); if (j.role !== 'admin') return alert('That code is for a phone, not for the back office.');
+    try { const j = await api('/p/claim', { code }); if (j.role !== 'admin') return say('That code is for a phone, not for the back office.', '', '💬');
       A = { pid: j.pid, key: j.key, doc: C.merge(C.newDoc(), j.doc), meta: j.meta, synced: now() }; persist(); render(); toast('Linked 🎉'); checkPush();
-    } catch (e) { alert('That code did not work. Codes last 15 minutes and work once.'); }
+    } catch (e) { say('That code did not work. Codes last 15 minutes and work once.', '', '💬'); }
+    return;
+  }
+  if (a === 'create') {
+    try { const j = await api('/p/sync', { role: 'admin', doc: C.newDoc() });
+      A = { pid: j.pid, key: j.key, doc: C.merge(C.newDoc(), j.doc), meta: j.meta, synced: now() }; persist(); tab = 'set'; render(); toast('Let\'s set it up 🎁'); checkPush();
+    } catch (e) { say(e.message === 'full' ? 'Server is full' : 'No connection', e.message === 'full' ? 'Too many profiles on your worker.' : 'Check your internet and try again.', '📶'); }
     return;
   }
   if (!A) return;
@@ -154,26 +173,42 @@ document.addEventListener('click', async ev => {
   if (a === 'tab') { tab = b.dataset.k; render(); window.scrollTo(0, 0); }
   else if (a === 'refresh') sync();
   else if (a === 'dd') doseSheet(b.dataset.k);
-  else if (a === 'mark' || a === 'unmark') { const k = b.dataset.k, m = D.meds[k.split('|')[1]]; if (a === 'mark' && !confirm('Mark this dose as taken? His phone will stop reminding him about it.')) return; D.log[k] = { t: a === 'mark' ? t : 0, p: m ? m.perDose : 1, u: t, by: 'helper' }; U.closeSheet(); save(); }
+  else if (a === 'mark' || a === 'unmark') { const k = b.dataset.k, m = D.meds[k.split('|')[1]]; if (a === 'mark' && !(await ask({ icon: '✅', title: 'Mark as taken?', text: 'His phone will stop reminding him about this dose.', ok: 'Mark taken' }))) return; D.log[k] = { t: a === 'mark' ? t : 0, p: m ? m.perDose : 1, u: t, by: 'helper' }; U.closeSheet(); save(); }
   else if (a === 'new') U.openEditor(CX);
   else if (a === 'edit') U.openEditor(CX, b.dataset.id);
   else if (a === 'buy') U.openBuy(CX, b.dataset.id);
   else if (a === 'det') { tab = 'meds'; render(); }
-  else if (a === 'delbuy') { const x = D.buys[b.dataset.id]; if (x && confirm('Remove this purchase?')) { D.buys[x.id] = { ...x, del: true, u: t }; save(); } }
+  else if (a === 'delbuy') { const x = D.buys[b.dataset.id]; if (x && await ask({ icon: '🗑️', title: 'Remove this purchase?', ok: 'Remove', danger: true })) { D.buys[x.id] = { ...x, del: true, u: t }; save(); } }
   else if (a === 'shop') { const s = D.shop[b.dataset.id]; if (s) { D.shop[s.id] = { ...s, done: s.done ? 0 : t, u: t }; save(); } }
   else if (a === 'delshop') { const s = D.shop[b.dataset.id]; if (s) { D.shop[s.id] = { ...s, del: true, u: t }; save(); } }
   else if (a === 'additem') { const v = ($('#newitem').value || '').trim(); if (!v) return; const id = C.rid('s'); D.shop[id] = { id, text: v, kind: 'other', why: '', add: t, done: 0, u: t }; save(); toast('Added. He will be reminded.'); }
   else if (a === 'ctog') { D.cfg = { ...D.cfg, [b.dataset.k]: !D.cfg[b.dataset.k], u: t }; save(); }
   else if (a === 'copt') { D.cfg = { ...D.cfg, [b.dataset.k]: JSON.parse(b.dataset.v), u: t }; save(); }
   else if (a === 'perm') enablePush();
-  else if (a === 'code') { try { const j = await api('/p/code', { pid: A.pid, key: A.key, role: 'admin' }); U.openSheet(`<h1 style="margin-top:0">Code for his new phone</h1><p>On the new phone, open BlovMed → Settings → Helper → <b>Moving from another phone?</b> and type:</p><div class="code">${j.code}</div><p class="mini">Works once, for 15 minutes. The old phone will stop syncing.</p><button class="btn full" data-a="close">Done</button>`); } catch (e) { alert('Could not get a code. Check your internet.'); } }
-  else if (a === 'logout') { if (confirm('Log out? You will need a new code from his phone to come back.')) { A = null; localStorage.removeItem(AK); render(); } }
+  else if (a === 'giftlink') {
+    if (!C.medList(D).length && !(await ask({ icon: '💊', title: 'No medicines yet', text: 'He can add them himself, but it is nicer if they are ready. Create the link anyway?', ok: 'Create link', cancel: 'Add meds first' }))) { tab = 'meds'; render(); return; }
+    try {
+      await sync(); const j = await api('/p/code', { pid: A.pid, key: A.key, role: 'admin', gift: true });
+      const link = location.href.replace(/admin\.html.*$/, '').replace(/[#?].*$/, '') + '#gift=' + j.code;
+      const msg = `Hi ${D.cfg.name || 'love'}! 💖 I made you an app to help with your meds. Open this link${'\n'}${link}${'\n'}On iPhone, open it in Safari and follow the steps on screen.`;
+      A.giftMsg = msg; persist();
+      U.openSheet(`<h1 style="margin-top:0">💌 His gift link</h1><p class="sub">Send him this message. The link works once and lasts ${j.days} days.</p>
+       <div class="gift">${esc(msg)}</div>
+       ${navigator.share ? '<button class="btn full big" data-a="sharegift">Share…</button>' : ''}<button class="btn ${navigator.share ? 'ghost' : ''} full" style="margin-top:8px" data-a="copygift">Copy message</button>
+       <p class="mini" style="margin-top:12px">Code if he needs to type it: <b>${j.code}</b>. Need a new one? Just create another link.</p>`);
+    } catch (e) { say('No connection', 'Could not create the link. Check your internet.', '📶'); }
+  }
+  else if (a === 'copygift') { try { await navigator.clipboard.writeText(A.giftMsg); toast('Copied. Paste it in your chat with him 💌'); } catch (e) { say('Copy it from the box', '', '📋'); } }
+  else if (a === 'sharegift') { try { await navigator.share({ text: A.giftMsg }); } catch (e) {} }
+  else if (a === 'reset') { if (await ask({ icon: '🔄', title: 'Reset stars and streak?', text: 'His stars, level and streak go back to 0. Medicines and dose history stay.', ok: 'Reset', danger: true })) { D.cfg = { ...D.cfg, ptsBase: 0, resetAt: t, resetDay: today().ymd, u: t }; save(); toast('Reset to 0 ✓'); } }
+  else if (a === 'code') { try { const j = await api('/p/code', { pid: A.pid, key: A.key, role: 'admin' }); U.openSheet(`<h1 style="margin-top:0">Code for his new phone</h1><p>On the new phone, open BlovMed → Settings → Helper → <b>Moving from another phone?</b> and type:</p><div class="code">${j.code}</div><p class="mini">Works once, for 15 minutes. The old phone will stop syncing.</p><button class="btn full" data-a="close">Done</button>`); } catch (e) { say('Could not get a code. Check your internet.', '', '💬'); } }
+  else if (a === 'logout') { if (await ask({ icon: '👋', title: 'Log out?', text: 'You will need a new code from his phone to come back.', ok: 'Log out', danger: true })) { A = null; localStorage.removeItem(AK); render(); } }
 });
 document.addEventListener('change', ev => {
   if (A && U.uiChange(ev)) return;
   const k = ev.target.dataset && ev.target.dataset.s; if (!k || !A) return;
   const D = A.doc, v = ev.target.value, t = now(), c = { ...D.cfg };
-  if (k === 'name' || k === 'helper') c[k] = v.trim();
+  if (k === 'name' || k === 'helper' || k === 'gift') c[k] = v.trim();
   else if (k === 'cur') c.cur = v.trim() || '₱';
   else if (k === 'pd1' || k === 'pd2') { const pd = [...c.paydays]; pd[k === 'pd1' ? 0 : 1] = Math.min(31, Math.max(1, parseInt(v) || 15)); c.paydays = pd; }
   else if (k === 'alertHour' || k === 'shopHour') c[k] = Math.min(23, Math.max(0, parseInt(v) || 0));

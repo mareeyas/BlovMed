@@ -10,9 +10,40 @@ export const fmtDT = ts => new Date(ts).toLocaleDateString('en-US', { month: 'sh
 export const ago = t => { const h = (Date.now() - t) / 36e5; return h < 1 / 60 ? 'just now' : h < 1 ? Math.round(h * 60) + ' min ago' : h < 24 ? (Math.round(h * 10) / 10) + ' h ago' : Math.floor(h / 24) + ' days ago'; };
 export const pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
 export function toast(msg) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 2700); }
-export function openSheet(html) { $('#sheetBody').innerHTML = html; $('#sheet').classList.add('open'); $('#sheetBody').scrollTop = 0; }
-export function closeSheet() { $('#sheet').classList.remove('open'); E = null; sheetKind = null; }
-export const sheetOpen = () => $('#sheet').classList.contains('open');
+/* ---------- clean pop-up questions (instead of the browser's "site says" boxes) ---------- */
+export function ask({ title, text = '', ok = 'OK', cancel = 'Cancel', danger = false, icon = '' }) {
+  return new Promise(res => {
+    const m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = `<div class="mbox" role="dialog" aria-modal="true">${icon ? `<div class="micon">${icon}</div>` : ''}<h3>${title}</h3>${text ? `<p>${text}</p>` : ''}<div class="mbtns">${cancel ? `<button class="btn ghost" data-m="0">${cancel}</button>` : ''}<button class="btn ${danger ? 'red' : ''}" data-m="1">${ok}</button></div></div>`;
+    m.addEventListener('click', e => { e.stopPropagation(); const b = e.target.closest('[data-m]'); if (!b && e.target !== m) return; m.remove(); res(!!b && b.dataset.m === '1'); });
+    document.body.appendChild(m); m.querySelector('[data-m="1"]').focus();
+  });
+}
+export const say = (title, text, icon = 'ℹ️') => ask({ title, text, ok: 'Got it', cancel: null, icon });
+
+/* ---------- bottom sheets + the phone's back button ---------- */
+let ignorePop = 0, backFn = null;
+export const onBack = fn => { backFn = fn; };
+export function pushView() { history.pushState({ v: 1 }, ''); }
+export function openSheet(html, noBack) {
+  if (!sheetOpen()) history.pushState({ sheet: 1 }, '');
+  $('#sheetBody').innerHTML = (noBack ? '' : '<button class="back" data-a="close">← Back</button>') + html;
+  $('#sheet').classList.add('open'); $('#sheetBody').scrollTop = 0;
+}
+export function closeSheet(fromPop) {
+  const was = sheetOpen();
+  $('#sheet').classList.remove('open'); E = null; sheetKind = null;
+  if (was && !fromPop && history.state && history.state.sheet) { ignorePop++; history.back(); }
+}
+export const goBack = () => history.back();
+document.addEventListener('click', e => { if (e.target && e.target.id === 'sheet') closeSheet(); }); // tap outside a sheet to close it
+window.addEventListener('popstate', () => {
+  if (ignorePop) { ignorePop--; return; }
+  if (document.querySelector('.modal')) { document.querySelector('.modal [data-m="0"],.modal [data-m="1"]').click(); return; }
+  if (sheetOpen()) { closeSheet(true); return; }
+  if (backFn) backFn();
+});
+export function sheetOpen() { return $('#sheet').classList.contains('open'); }
 
 /* ---------- common medicines (adult label guides) ---------- */
 export const LIB = {
@@ -57,11 +88,45 @@ export const SYM = {
     eat: ['Drink water. Wash off the thing that triggered it if you know it.', 'Cool, damp cloth on itchy skin.'],
     avoid: ['Anything you think caused it (food, soap, dust).'],
     dr: ['Swelling of the face, lips or tongue, or trouble breathing: go to the ER now', 'Rash with fever, or a rash spreading fast'] },
+  cough: { e: '😷', n: 'Cough', m: [], drink: ['Warm water', 'Honey (for warm tea)'], food: ['Soup (sabaw)'], other: ['Throat lozenges'],
+    eat: ['Warm drinks with honey can soothe a cough.', 'Drink plenty of water to loosen mucus.', 'Rest, and stay away from smoke.'],
+    avoid: ['Cough and cold syrups with decongestants or many ingredients. Some clash with ADHD medicines, so ask the pharmacist first.', 'Smoking and vaping.'],
+    dr: ['Trouble breathing, chest pain, or coughing up blood: go to the ER', 'Cough with a high fever', 'Wheezing, or getting worse instead of better', 'Lasting more than 2 to 3 weeks'] },
+  pain: { e: '💪', n: 'Body or muscle pain', m: ['para', 'ibu'], drink: ['Bottled water'], food: [], other: ['Cold pack or warm compress'],
+    eat: ['Rest the sore area.', 'Fresh injury: cold pack for the first 1 to 2 days, then warm compress.', 'Gentle stretching once it eases.'],
+    avoid: ['Heavy lifting or hard exercise until it feels better.', 'Ibuprofen on an empty stomach.'],
+    dr: ['Body pain with fever, rash or bleeding (possible dengue)', 'Severe pain after a fall, or you cannot move the area', 'Swelling, redness and warmth that keeps spreading', 'Chest pain: go to the ER now'] },
+  tooth: { e: '🦷', n: 'Toothache', m: ['para', 'ibu'], drink: ['Bottled water'], food: ['Soft food (lugaw, soup)'], other: [],
+    eat: ['Rinse with warm salt water.', 'Eat soft food and chew on the other side.', 'Brush and floss gently around the tooth.'],
+    avoid: ['Very hot, cold or sweet food and drinks.', 'Putting a pain tablet on the gum. It can burn it.'],
+    dr: ['See a dentist soon. Pain pills only cover it for a while.', 'Swollen face or jaw, fever, or trouble opening your mouth: go today', 'Trouble swallowing or breathing: go to the ER'] },
+  constip: { e: '🧻', n: 'Constipation', m: [], drink: ['Bottled water', 'Papaya or prune juice'], food: ['Papaya or bananas', 'Vegetables', 'Oatmeal'], other: [],
+    eat: ['Drink more water through the day.', 'Eat fiber: fruit, vegetables, oats.', 'Walk around. Moving helps your gut.'],
+    avoid: ['Holding it in when you feel the urge.', 'Lots of processed or fried food.', 'Laxatives every day without a doctor.'],
+    dr: ['Severe belly pain, vomiting, or a swollen belly', 'Blood in the stool, or black stool', 'Nothing for more than a week, or it keeps happening'] },
+  dizzy: { e: '😵', n: 'Dizziness', m: ['ors'], drink: ['Bottled water'], food: ['A light snack'], other: [],
+    eat: ['Sit or lie down right away until it passes.', 'Sip water. Eat something if you skipped a meal.', 'Stand up slowly.'],
+    avoid: ['Driving or riding while dizzy.', 'Alcohol and lots of coffee.'],
+    dr: ['Fainting, chest pain, or a racing heartbeat: go to the ER', 'Sudden weakness or numbness on one side, slurred speech, or a drooping face: go to the ER now', 'A very bad headache with it', 'It keeps coming back'] },
+  cut: { e: '🩹', n: 'Small cut or scrape', m: [], drink: [], food: [], other: ['Antiseptic (like povidone-iodine)', 'Adhesive bandages', 'Clean gauze'],
+    eat: ['Wash it with clean water and soap.', 'Press with a clean cloth to stop bleeding.', 'Cover with a clean bandage and change it daily.'],
+    avoid: ['Dirty cloths on the wound.', 'Picking at the scab.'],
+    dr: ['Bleeding that will not stop after 10 minutes of pressure', 'A deep or gaping cut, or something stuck in it', 'A cut from something rusty, or an animal bite or scratch (you may need a tetanus or rabies shot)', 'Redness, swelling, pus or fever a few days later'] },
+  eyes: { e: '👀', n: 'Sore or tired eyes', m: [], drink: ['Bottled water'], food: [], other: ['Lubricating eye drops (ask the pharmacist)'],
+    eat: ['Every 20 minutes on a screen, look at something far away for 20 seconds.', 'Put a cool, clean cloth over closed eyes.', 'Blink often.'],
+    avoid: ['Rubbing your eyes.', 'Sharing towels or eye drops.', 'Contact lenses while your eyes are red.'],
+    dr: ['Eye pain, sudden blurry vision, or seeing flashes', 'Red eye with thick discharge, or it is getting worse', 'Something got in your eye, or a chemical splash: rinse with water and go now'] },
+  sleep: { e: '😴', n: "Can't sleep", m: [], drink: ['Caffeine-free tea or warm milk'], food: [], other: [],
+    eat: ['Sleep and wake up at the same time every day.', 'Put your phone away 30 minutes before bed.', 'Keep the room dark, cool and quiet.'],
+    avoid: ['Coffee, energy drinks and soda after lunch.', 'Sleeping pills without a doctor. Some clash with ADHD medicines.', 'Long naps late in the afternoon.'],
+    dr: ['Trouble sleeping most nights for more than 2 to 3 weeks', 'Ask your doctor if the timing of your ADHD medicine could be keeping you awake'] },
 };
+// His own version of a common medicine (brand name, how he takes it, note). Safety limits stay fixed.
+export const lib = (doc, id) => ({ ...LIB[id], ...(((doc && doc.cfg.libOv) || {})[id] || {}) });
 export const libPills = id => { const L = LIB[id], c = L.course, per = c ? (c.type === 'hours' ? c.cnt : c.times.length) : 2; return L.dose * per * L.days; };
 export function fromLib(doc, id, mode) {
-  const L = LIB[id], c = L.course, t = today().ymd;
-  const e = { id: C.rid('m'), name: L.n, perDose: L.dose, times: [], stock0: 0, stockAt: Date.now(), price: (doc.cfg.libPrice || {})[id] || 0, lib: id, maxDay: L.max, maxPer: L.mp, minGap: L.gap, start: t, dur: null, sched: { type: 'prn' }, prn: true, notes: L.notes || '', purpose: '', isNew: true };
+  const L = lib(doc, id), c = L.course, t = today().ymd;
+  const e = { id: C.rid('m'), name: L.n, perDose: L.dose, times: [], stock0: 0, stockAt: Date.now(), price: (doc.cfg.libPrice || {})[id] || 0, lib: id, maxDay: L.max, maxPer: L.mp, minGap: L.gap, start: t, dur: null, sched: { type: 'prn' }, prn: true, notes: L.how || L.notes || '', purpose: '', isNew: true };
   if (mode === 'course' && c) { e.prn = false; e.dur = L.days; if (c.type === 'hours') { e.sched = { type: 'hours', gap: c.gap, cnt: c.cnt, first: c.first }; e.times = C.hrs(c.first, c.gap, c.cnt); } else { e.sched = { type: 'daily' }; e.times = [...c.times]; } }
   return e;
 }
@@ -221,7 +286,7 @@ export function uiClick(a, b) {
   if (sheetKind === 'buy') {
     if (a === 'bm') { readBuy(); B.med = b.dataset.id; drawBuy(); return true; }
     if (a === 'buysave') {
-      readBuy(); const n = parseInt(B.pills) || 0; if (n < 1) { alert('How many pills did you buy?'); return true; }
+      readBuy(); const n = parseInt(B.pills) || 0; if (n < 1) { say('How many pills?', 'Type how many pills you bought.', '🛒'); return true; }
       const m = doc.meds[B.med], cost = B.cost === '' ? n * (m.price || 0) : Math.max(0, parseFloat(B.cost) || 0), now = Date.now();
       const id = C.rid('b'); doc.buys[id] = { id, med: m.id, pills: n, cost, t: now, d: today().ymd, u: now };
       if (B.cost !== '' && cost > 0) doc.meds[m.id] = { ...m, price: Math.round(cost / n * 100) / 100, u: now };
@@ -240,14 +305,14 @@ export function uiClick(a, b) {
   }
   if (a === 'wd') { grab(); const d = +b.dataset.v, s = E.sched, c = s.days || []; s.days = c.includes(d) ? c.filter(x => x !== d) : [...c, d]; drawEditor(); return true; }
   if (a === 'savem') {
-    grab(); const err = checkMed(E); if (err) { alert(err); return true; }
+    grab(); const err = checkMed(E); if (err) { say('Almost there', err, '✏️'); return true; }
     const now = Date.now(), old = doc.meds[E.id], m = { ...E }; delete m.isNew; delete m._stock;
     if (!old) m.c = now;
     const cur = old ? C.stockOf(doc, old) : null;
     if (!old || E._stock !== cur) { m.stock0 = E._stock; m.stockAt = now; }
     m.u = now; doc.meds[m.id] = m; closeSheet(); CX.save(); toast('Saved ✓'); return true;
   }
-  if (a === 'delm') { if (confirm('Delete ' + E.name + '?')) { doc.meds[E.id] = { ...doc.meds[E.id], del: true, u: Date.now() }; closeSheet(); CX.save(); } return true; }
+  if (a === 'delm') { const id = E.id, nm = E.name; ask({ title: `Delete ${esc(nm)}?`, text: 'Its reminders will stop. Past doses stay in the history.', ok: 'Delete', danger: true, icon: '🗑️' }).then(y => { if (y) { doc.meds[id] = { ...doc.meds[id], del: true, u: Date.now() }; closeSheet(); CX.save(); } }); return true; }
   return false;
 }
 function readBuy() { const p = $('#b_pills'), c = $('#b_cost'); if (p) B.pills = p.value; if (c) B.cost = c.value; }
