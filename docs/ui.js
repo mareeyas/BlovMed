@@ -1,0 +1,268 @@
+// BlovMed shared screens for the app (index.html) and the back office (admin.html).
+import * as C from './core.js';
+
+export const $ = s => document.querySelector(s);
+export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+export const money = (doc, n) => { const r = Math.round((n || 0) * 100) / 100; return (doc.cfg.cur || '₱') + r.toLocaleString('en-US', { minimumFractionDigits: r % 1 ? 2 : 0, maximumFractionDigits: 2 }); };
+export const today = () => C.localNow(undefined, Date.now());
+export const tm = ts => { const d = new Date(ts); return C.fmtT(C.pad(d.getHours()) + ':' + C.pad(d.getMinutes())); };
+export const fmtDT = ts => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' + tm(ts);
+export const ago = t => { const h = (Date.now() - t) / 36e5; return h < 1 / 60 ? 'just now' : h < 1 ? Math.round(h * 60) + ' min ago' : h < 24 ? (Math.round(h * 10) / 10) + ' h ago' : Math.floor(h / 24) + ' days ago'; };
+export const pl = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+export function toast(msg) { const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 2700); }
+export function openSheet(html) { $('#sheetBody').innerHTML = html; $('#sheet').classList.add('open'); $('#sheetBody').scrollTop = 0; }
+export function closeSheet() { $('#sheet').classList.remove('open'); E = null; sheetKind = null; }
+export const sheetOpen = () => $('#sheet').classList.contains('open');
+
+/* ---------- common medicines (adult label guides) ---------- */
+export const LIB = {
+  para: { n: 'Paracetamol 500 mg', dose: 1, mp: 2, max: 8, gap: 4, days: 3, per: '1 to 2 tablets (500 to 1,000 mg) every 4 to 6 hours', lim: 'Never more than 8 tablets in 24 hours, with at least 4 hours between doses. Many cold and flu pills already contain paracetamol, so do not double up.', course: { type: 'hours', gap: 5, cnt: 4, first: '08:00' } },
+  ibu: { n: 'Ibuprofen 200 mg', dose: 1, mp: 2, max: 6, gap: 4, days: 3, per: '1 to 2 tablets (200 to 400 mg), up to 3 times a day, always with food', lim: 'Never more than 6 tablets (1,200 mg) in 24 hours. Not for stomach pain, ulcers, kidney problems, or if dengue is possible.', notes: 'Take with food', course: { type: 'hours', gap: 6, cnt: 3, first: '08:00' } },
+  lop: { n: 'Loperamide 2 mg', dose: 1, mp: 2, max: 4, gap: 1, days: 2, per: 'Start with 2 capsules, then 1 after each loose stool', lim: 'Never more than 4 capsules (8 mg) a day without a doctor. See a doctor if it lasts over 2 days. Not for diarrhea with fever or blood.' },
+  cet: { n: 'Cetirizine 10 mg', dose: 1, mp: 1, max: 1, gap: 20, days: 7, per: '1 tablet once a day', lim: 'Only 1 tablet a day. It can make you sleepy, so many people take it at night.', course: { type: 'daily', times: ['20:00'] } },
+  ors: { n: 'Oral rehydration salts (ORS)', dose: 1, mp: null, max: null, gap: 0, days: 2, unit: 'sachet', per: 'Mix exactly as the packet says. Sip small amounts often.', lim: 'Use clean water and the amount on the packet.' },
+  anta: { n: 'Antacid tablets', dose: 1, mp: null, max: null, gap: 0, days: 2, per: 'Follow your product label, usually after meals and at bedtime.', lim: 'Ask the pharmacist how far apart to take it from your regular medicines.' },
+};
+// buy: drinks and food to pick up when sick (what to eat and avoid stays as advice).
+export const SYM = {
+  head: { e: '🤕', n: 'Headache', m: ['para', 'ibu'], drink: ['Bottled water'], food: ['Crackers or a light snack'],
+    eat: ['Drink a big glass of water first. Dehydration is a common cause.', 'Eat something light if you skipped a meal.', 'Rest somewhere quiet and dim, and take a break from screens.'],
+    avoid: ['Too much coffee or alcohol.', 'Pain pills on more than 2 or 3 days a week. That can make headaches worse.'],
+    dr: ['Sudden, severe headache, the worst of your life', 'Headache with stiff neck, high fever, confusion, weakness, or trouble seeing or speaking', 'After a hit to the head', 'Lasting more than 3 days, or coming back often'] },
+  fever: { e: '🤒', n: 'Fever', m: ['para'], drink: ['Bottled water', 'Clear soup or broth'], food: ['Lugaw (rice porridge)', 'Bananas'],
+    eat: ['Drink lots of fluids: water, ORS, clear soup.', 'Eat light: lugaw (rice porridge), soup, banana.', 'Rest and wear light clothes.'],
+    avoid: ['Ibuprofen and aspirin if dengue is possible (it is common in the Philippines). Use paracetamol only until a doctor says otherwise.', 'Alcohol.'],
+    dr: ['Fever of 39°C or higher, or lasting more than 2 to 3 days', 'Fever with severe headache, pain behind the eyes, joint pain, rash, or bleeding gums or nose (possible dengue)', 'Trouble breathing, stiff neck, confusion, or you cannot drink fluids'] },
+  belly: { e: '😣', n: 'Stomachache', m: ['anta'], drink: ['Ginger tea', 'Bottled water'], food: ['Crackers', 'Bananas', 'Plain rice or lugaw'],
+    eat: ['Small plain meals: rice, lugaw, banana, toast or crackers, boiled potato.', 'Sip water or warm water often. Ginger tea can help settle it.', 'Eat slowly and stop when you feel full.'],
+    avoid: ['Spicy, oily or fried food, coffee, alcohol and soda.', 'Ibuprofen and other pain pills. They can irritate the stomach.'],
+    dr: ['Severe or constant pain, or pain low on the right side', 'Blood in vomit or stool, or black stool', 'Fever, a hard swollen belly, or you cannot keep fluids down', 'Pain lasting more than 2 days'] },
+  heart: { e: '🔥', n: 'Heartburn', m: ['anta'], drink: ['Bottled water'], food: ['Crackers', 'Bananas'],
+    eat: ['Small meals, eaten slowly.', 'Stay upright for 2 to 3 hours after eating.', 'Water or plain warm water.'],
+    avoid: ['Coffee, spicy, fatty or fried food, chocolate, soda, alcohol.', 'Eating right before bed.'],
+    dr: ['Chest pain with sweating, shortness of breath, or pain in the arm or jaw: go to the ER now', 'Trouble swallowing, vomiting, or black stool', 'Heartburn on most days for more than 2 weeks'] },
+  loose: { e: '🚽', n: 'Diarrhea', m: ['ors', 'lop'], drink: ['Bottled water', 'Clear soup or broth'], food: ['Bananas', 'Plain rice', 'Toast or crackers'],
+    eat: ['Sip ORS and water all day, even a little at a time.', 'Plain foods: rice, banana, toast, boiled chicken, clear soup.'],
+    avoid: ['Milk, coffee, alcohol, soda, juice, and greasy or spicy food.', 'Loperamide if you have a fever or blood in the stool.'],
+    dr: ['Blood or black stool, or a fever', 'Signs of dehydration: very dark urine, dizziness, no urine for 8 hours', 'Lasting more than 2 days, or severe belly pain'] },
+  nausea: { e: '🤢', n: 'Nausea or vomiting', m: ['ors'], drink: ['Ginger tea', 'Bottled water'], food: ['Crackers', 'Bananas'],
+    eat: ['Wait 30 minutes after vomiting, then take tiny sips of ORS or water.', 'Then crackers, rice or banana. Ginger tea may help.'],
+    avoid: ['Greasy, spicy or very sweet food, strong smells, alcohol.'],
+    dr: ['You cannot keep any liquid down for 12 to 24 hours', 'Blood in vomit, severe belly pain, or a bad headache with stiff neck', 'Dizziness, very dark urine, or no urine for 8 hours'] },
+  cold: { e: '🤧', n: 'Cold or sore throat', m: ['para'], drink: ['Honey (for warm tea)', 'Bottled water'], food: ['Soup (sabaw)', 'Lugaw'],
+    eat: ['Warm fluids: soup, warm water, tea with honey.', 'Gargle warm salt water for a sore throat.', 'Rest and drink plenty of water.'],
+    avoid: ['Cold pills with decongestants (phenylephrine, pseudoephedrine). They can clash with ADHD medicines. Ask the pharmacist first.', 'Cold products that already contain paracetamol, if you also take paracetamol.'],
+    dr: ['Trouble breathing or chest pain', 'Fever over 39°C or lasting more than 3 days', 'Not improving after 7 to 10 days, or a sore throat so bad you cannot swallow'] },
+  allergy: { e: '🌼', n: 'Allergy or itching', m: ['cet'], drink: ['Bottled water'], food: [],
+    eat: ['Drink water. Wash off the thing that triggered it if you know it.', 'Cool, damp cloth on itchy skin.'],
+    avoid: ['Anything you think caused it (food, soap, dust).'],
+    dr: ['Swelling of the face, lips or tongue, or trouble breathing: go to the ER now', 'Rash with fever, or a rash spreading fast'] },
+};
+export const libPills = id => { const L = LIB[id], c = L.course, per = c ? (c.type === 'hours' ? c.cnt : c.times.length) : 2; return L.dose * per * L.days; };
+export function fromLib(doc, id, mode) {
+  const L = LIB[id], c = L.course, t = today().ymd;
+  const e = { id: C.rid('m'), name: L.n, perDose: L.dose, times: [], stock0: 0, stockAt: Date.now(), price: (doc.cfg.libPrice || {})[id] || 0, lib: id, maxDay: L.max, maxPer: L.mp, minGap: L.gap, start: t, dur: null, sched: { type: 'prn' }, prn: true, notes: L.notes || '', purpose: '', isNew: true };
+  if (mode === 'course' && c) { e.prn = false; e.dur = L.days; if (c.type === 'hours') { e.sched = { type: 'hours', gap: c.gap, cnt: c.cnt, first: c.first }; e.times = C.hrs(c.first, c.gap, c.cnt); } else { e.sched = { type: 'daily' }; e.times = [...c.times]; } }
+  return e;
+}
+
+/* ---------- medicine details ---------- */
+export function medDetails(doc, m, admin) {
+  const t = today().ymd, st = C.stockOf(doc, m), dl = m.prn ? null : C.daysLeft(doc, m, t), l = C.lastTake(doc, m), n24 = C.pills24(doc, m, Date.now());
+  const course = C.courseText(m, t), next = m.prn ? null : nextDose(doc, m);
+  const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
+  return `<dl class="kv">
+    ${row('For', esc(m.purpose))}${row('How to take', esc(m.notes))}
+    ${row('Each time', pl(m.perDose, 'pill'))}${row('When', esc(C.schedText(m)))}${row('Course', course)}
+    ${row('Next dose', next)}
+    ${row('Pills left', st + (dl ? (dl.days === Infinity ? ' · enough' : ` · lasts ${pl(dl.days, 'day')}`) : ''))}
+    ${row('Runs out', dl && dl.out ? C.fmtD(dl.out) : '')}
+    ${row('Price per pill', m.price ? money(doc, m.price) : (admin ? '<span class="mini">not set</span>' : ''))}
+    ${row('Last taken', l ? fmtDT(l) + ' (' + ago(l) + ')' : 'Not yet')}
+    ${row('Last 24 hours', (m.maxDay || m.prn) ? `${n24}${m.maxDay ? ' of ' + m.maxDay + ' max' : ''} pills` : '')}
+    ${row('Wait between doses', m.minGap ? m.minGap + ' hours' : '')}
+  </dl>`;
+}
+export function nextDose(doc, m) {
+  const n = today();
+  for (let i = 0; i < 60; i++) { const d = C.addD(n.ymd, i); for (const t of C.timesOn(m, d)) { if (C.takenAt(doc, C.dkey(d, m.id, t))) continue; if (i === 0 && C.mins(t) < n.min - 60) continue; return (i === 0 ? 'Today ' : i === 1 ? 'Tomorrow ' : C.fmtD(d) + ', ') + C.fmtT(t); } }
+  return '';
+}
+export function guard(doc, m) {
+  const n = C.pills24(doc, m, Date.now());
+  if (m.maxDay && n + m.perDose > m.maxDay) return `STOP. Taking this would go over the limit for ${m.name} (${m.maxDay} pills in 24 hours). You already took ${n}.`;
+  const l = C.lastTake(doc, m);
+  if (m.minGap && l && Date.now() - l < m.minGap * 36e5) return `TOO SOON. You took ${m.name} ${ago(l)}. Wait until ${tm(l + m.minGap * 36e5)}.`;
+  return '';
+}
+
+/* ---------- money (per pill) ---------- */
+export function moneyHtml(doc, admin) {
+  const t = today().ymd, meds = C.medList(doc).filter(m => !m.prn);
+  if (!meds.length) return `<h1>Money</h1><div class="empty">Add a medicine first.</div>`;
+  const p = C.plan(doc, t), M = x => money(doc, x);
+  const line = (r, pills, cost) => `<div class="row"><span>${esc(r.m.name)}<br><span class="mini">${pl(pills, 'pill')} × ${r.price ? M(r.price) : '?'}</span></span><b>${r.price ? M(cost) : '—'}</b></div>`;
+  const now = p.rows.filter(r => r.nowPills), pay = p.rows.filter(r => r.payPills);
+  return `<h1>Money</h1><p class="sub">Paydays: the ${doc.cfg.paydays.join(' and ')}. Prices are per pill.</p>
+  ${p.noPrice.length ? `<button class="alert" data-a="edit" data-id="${p.rows.find(r => !r.price).m.id}"><i>✏️</i><span>Add the price per pill for ${esc(p.noPrice.join(', '))}<small>Then all the money numbers will be filled in.</small></span></button>` : ''}
+  ${now.length ? `<div class="card" style="border-color:var(--bad)"><div class="row"><b>🛒 Buy before payday</b><span class="pill bad">${p.toPay ? pl(p.toPay, 'day') + ' to payday' : 'today'}</span></div>
+    <div class="big">${M(p.nowTotal)}</div><p class="mini" style="margin:0 0 8px">You'll run out before ${C.fmtD(p.p1)}.</p>${now.map(r => line(r, r.nowPills, r.nowCost)).join('')}
+    <button class="btn full" style="margin-top:12px" data-a="buy">I bought pills</button></div>`
+    : `<div class="alert ok"><i>✅</i><span>You have enough pills until payday (${C.fmtD(p.p1)}).</span></div>`}
+  <div class="card"><div class="row"><b>💰 ${p.toPay ? 'On payday, ' + C.fmtD(p.p1) : 'Today is payday!'}</b><span class="pill warn">${p.toPay ? 'in ' + pl(p.toPay, 'day') : 'now'}</span></div>
+    <p class="mini" style="margin:6px 0 0">Set aside this much for meds:</p><div class="big">${M(p.payTotal)}</div>
+    <p class="mini" style="margin:0 0 8px">Covers you until the next payday, ${C.fmtD(p.p2)} (${pl(p.cycle, 'day')}).</p>
+    ${pay.map(r => line(r, r.payPills, r.payCost)).join('') || '<p class="sub">Nothing to buy. You already have enough.</p>'}</div>
+  <h2>Your pills</h2>
+  ${p.rows.map(r => { const d = r.dl.days, cls = d <= 3 ? 'bad' : d <= 7 ? 'warn' : 'ok';
+    return `<button class="card" style="width:100%;text-align:left;font:inherit;color:inherit" data-a="det" data-id="${r.m.id}"><div class="row"><b>${esc(r.m.name)}</b><span class="pill ${cls}">${d === Infinity ? 'Enough' : pl(d, 'day') + ' left'}</span></div>
+    <div class="row mini"><span>${pl(r.stock, 'pill')} left${r.dl.out ? ' · out ' + C.fmtD(r.dl.out) : ''}</span><span>${r.price ? M(r.price) + ' each' : 'no price'}</span></div>
+    ${r.price ? `<div class="row mini"><span>Next 30 days: ${pl(r.month, 'pill')}</span><span>${M(r.monthCost)}</span></div>` : ''}</button>`; }).join('')}
+  ${p.monthTotal ? `<div class="card"><div class="row"><b>Meds for the next 30 days</b><b>${M(p.monthTotal)}</b></div></div>` : ''}
+  <div class="card"><div class="row"><b>Spent since ${C.fmtD(p.since)}</b><b>${M(p.spent)}</b></div>
+  ${C.live(doc.buys).sort((a, b) => b.t - a.t).slice(0, admin ? 30 : 5).map(b => { const m = doc.meds[b.med]; return `<div class="row mini"><span>${fmtDT(b.t)} · ${esc(m ? m.name : 'Medicine')} × ${b.pills}${admin ? ` <button class="btn ghost" style="padding:2px 8px;font-size:12px" data-a="delbuy" data-id="${b.id}">remove</button>` : ''}</span><span>${M(b.cost || 0)}</span></div>`; }).join('') || '<p class="mini">No purchases logged yet.</p>'}
+  <button class="btn ghost full" style="margin-top:12px" data-a="buy">+ I bought pills</button></div>`;
+}
+
+/* ---------- "I bought pills" sheet ---------- */
+let B = null, sheetKind = null, CX = null;
+export function openBuy(cx, medId) {
+  CX = cx; const meds = C.medList(cx.doc());
+  if (!meds.length) return toast('Add a medicine first.');
+  const m = meds.find(x => x.id === medId) || meds.find(x => !x.prn) || meds[0];
+  B = { med: m.id, pills: '', cost: '' }; sheetKind = 'buy'; drawBuy();
+}
+function drawBuy() {
+  const doc = CX.doc(), m = doc.meds[B.med];
+  openSheet(`<h1 style="margin-top:0">I bought pills 🛒</h1>
+  <label>Which medicine?</label><div class="opt">${C.medList(doc).map(x => `<button class="${x.id === B.med ? 'on' : ''}" data-a="bm" data-id="${x.id}">${esc(x.name)}</button>`).join('')}</div>
+  <label>How many pills?</label><input type="number" id="b_pills" min="1" inputmode="numeric" value="${B.pills}" placeholder="e.g. 30">
+  <label>Total I paid (${esc(doc.cfg.cur)})</label><input type="number" id="b_cost" min="0" step="0.01" inputmode="decimal" value="${B.cost}" placeholder="${m.price ? 'about ' + money(doc, m.price) + ' per pill' : 'e.g. 360'}">
+  <p class="mini" id="b_hint">${buyHint()}</p>
+  <button class="btn full big" data-a="buysave">Save</button><button class="btn ghost full" style="margin-top:10px" data-a="close">Cancel</button>`);
+}
+function buyHint() {
+  const doc = CX.doc(), m = doc.meds[B.med], n = +B.pills || 0, c = +B.cost;
+  if (!n) return 'Your pill count and price per pill will update by themselves.';
+  if (B.cost === '' && m.price) return `At ${money(doc, m.price)} per pill that is about ${money(doc, n * m.price)}.`;
+  return c ? `That is ${money(doc, c / n)} per pill.` : '';
+}
+
+/* ---------- medicine editor ---------- */
+let E = null;
+const FQ = [['daily', 'Every day'], ['everyN', 'Every few days'], ['weekly', 'Certain weekdays'], ['hours', 'Every few hours'], ['prn', 'Only when needed']];
+export function openEditor(cx, id, preset) {
+  CX = cx; const doc = cx.doc(), m = id && doc.meds[id];
+  E = preset || (m ? JSON.parse(JSON.stringify(m)) : { id: C.rid('m'), name: '', purpose: '', notes: '', perDose: 1, times: ['08:00'], stock0: 0, stockAt: Date.now(), price: 0, isNew: true, sched: { type: 'daily' }, start: today().ymd, dur: null, maxDay: null, minGap: 0 });
+  if (!E.sched) E.sched = { type: E.prn ? 'prn' : 'daily' };
+  if (!E.start) E.start = today().ymd;
+  E._stock = E.isNew && !m ? (E.stock0 || 0) : C.stockOf(doc, m || E);
+  sheetKind = 'edit'; drawEditor();
+}
+function drawEditor() {
+  const e = E, s = e.sched, t = s.type, doc = CX.doc();
+  openSheet(`<h1 style="margin-top:0">${e.isNew ? 'Add medicine' : 'Edit medicine'}</h1>
+  ${e.isNew ? `<label>Common medicines (fills in the safe limits)</label><select data-s="lib"><option value="">Choose one, or type your own below</option>${Object.entries(LIB).map(([k, l]) => `<option value="${k}" ${e.lib === k ? 'selected' : ''}>${l.n}</option>`).join('')}</select>` : ''}
+  <label>Name</label><input type="text" id="f_name" value="${esc(e.name)}" placeholder="e.g. Losartan 50 mg">
+  <label>What is it for? <span class="mini">(optional)</span></label><input type="text" id="f_for" value="${esc(e.purpose || '')}" placeholder="e.g. Blood pressure">
+  <label>How to take it <span class="mini">(optional, shows in reminders)</span></label><input type="text" id="f_notes" value="${esc(e.notes || '')}" placeholder="e.g. After breakfast, with water">
+  <label>Pills each time</label><input type="number" id="f_per" min="1" value="${e.perDose}">
+  <label>How often?</label><div class="opt">${FQ.map(([k, l]) => `<button class="${t === k ? 'on' : ''}" data-a="fq" data-v="${k}">${l}</button>`).join('')}</div>
+  ${t === 'everyN' ? `<label>Every how many days?</label><input type="number" id="f_n" min="2" max="60" value="${s.n || 2}">` : ''}
+  ${t === 'weekly' ? `<label>Which days?</label><div class="opt">${C.WD.map((d, i) => `<button class="${(s.days || []).includes(i) ? 'on' : ''}" data-a="wd" data-v="${i}">${d}</button>`).join('')}</div>` : ''}
+  ${t === 'hours' ? `<div class="two"><div><label>Every how many hours?</label><input type="number" id="f_gap" min="1" max="12" value="${s.gap || 6}"></div><div><label>Doses a day</label><input type="number" id="f_cnt" min="1" max="6" value="${s.cnt || 3}"></div></div><label>First dose at</label><input type="time" id="f_first" value="${s.first || '08:00'}">` : ''}
+  ${(t === 'daily' || t === 'everyN' || t === 'weekly') ? `<label>What time(s)?</label><div class="tc">${e.times.map((x, i) => `<span>${C.fmtT(x)}<button data-a="rmt" data-i="${i}" aria-label="Remove">×</button></span>`).join('')}</div><div class="add"><input type="time" id="f_t" value="20:00"><button class="btn ghost" data-a="addt">Add time</button></div>` : ''}
+  ${t === 'prn' ? '<p class="sub">It shows under "As needed" on Today. The app warns before too much is taken.</p>' : ''}
+  <div class="two"><div><label>Start date</label><input type="date" id="f_start" value="${e.start}"></div><div><label>For how many days?</label><input type="number" id="f_dur" min="1" placeholder="ongoing" value="${e.dur || ''}"></div></div>
+  <details ${(e.maxDay || e.minGap) ? 'open' : ''}><summary>Safety limits</summary><label>Most pills in 24 hours</label><input type="number" id="f_max" min="1" placeholder="no limit" value="${e.maxDay || ''}"><label>Wait at least (hours) between doses</label><input type="number" id="f_mg" min="0" step="0.5" placeholder="none" value="${e.minGap || ''}"></details>
+  <div id="hint">${edHint()}</div>
+  <details open><summary>Pills and price</summary>
+  <div class="two"><div><label>Pills I have now</label><input type="number" id="f_stock" min="0" value="${e._stock}"></div><div><label>Price per pill (${esc(doc.cfg.cur)})</label><input type="number" id="f_price" min="0" step="0.01" value="${e.price || ''}" placeholder="0"></div></div>
+  <div class="calc"><span class="mini">Only know the box price? Type it here and I'll work out the price per pill.</span><div class="two"><input type="number" id="f_pack" min="0" step="0.01" placeholder="Box price"><input type="number" id="f_packn" min="1" placeholder="Pills in box"></div></div></details>
+  <button class="btn full big" style="margin-top:18px" data-a="savem">Save</button>
+  <button class="btn ghost full" style="margin-top:10px" data-a="close">Cancel</button>
+  ${e.isNew ? '' : '<button class="btn red full" style="margin-top:10px" data-a="delm">Delete this medicine</button>'}`);
+}
+function edHint() {
+  const e = E, t = e.sched.type, pd = t === 'prn' ? 0 : e.times.length * e.perDose;
+  const w = (e.maxDay && pd > e.maxDay) ? `That is ${pd} pills a day. The safe limit is ${e.maxDay}. Lower it before saving.` : (e.maxPer && e.perDose > e.maxPer) ? `The usual dose is up to ${e.maxPer} at a time.` : '';
+  return (t === 'hours' ? `<div class="tc">${e.times.map(x => `<span>${C.fmtT(x)}</span>`).join('')}</div>` : '') + (w ? `<div class="alert bad"><i>⚠️</i><span>${w}</span></div>` : '');
+}
+function grab() {
+  const v = id => { const x = $('#' + id); return x ? x.value : null; }, e = E, s = e.sched;
+  if (v('f_name') !== null) e.name = v('f_name').trim();
+  if (v('f_for') !== null) e.purpose = v('f_for').trim();
+  if (v('f_notes') !== null) e.notes = v('f_notes').trim();
+  if (v('f_per') !== null) e.perDose = Math.max(1, parseInt(v('f_per')) || 1);
+  if (v('f_n') !== null) s.n = Math.max(2, parseInt(v('f_n')) || 2);
+  if (v('f_gap') !== null) { s.gap = Math.max(1, parseFloat(v('f_gap')) || 6); s.cnt = Math.min(6, Math.max(1, parseInt(v('f_cnt')) || 1)); s.first = v('f_first') || '08:00'; e.times = C.hrs(s.first, s.gap, s.cnt); }
+  if (v('f_start') !== null) e.start = v('f_start') || today().ymd;
+  if (v('f_dur') !== null) e.dur = parseInt(v('f_dur')) || null;
+  if (v('f_max') !== null) { e.maxDay = parseInt(v('f_max')) || null; e.minGap = parseFloat(v('f_mg')) || 0; }
+  if (v('f_stock') !== null) e._stock = Math.max(0, parseInt(v('f_stock')) || 0);
+  if (v('f_price') !== null) e.price = Math.max(0, parseFloat(v('f_price')) || 0);
+}
+function checkMed(e) {
+  e.prn = e.sched.type === 'prn';
+  if (!e.name) return 'Please type the medicine name.';
+  if (!e.prn && !e.times.length) return 'Add at least one time.';
+  if (e.sched.type === 'weekly' && !(e.sched.days || []).length) return 'Pick at least one day.';
+  const tot = e.prn ? 0 : e.times.length * e.perDose;
+  if (e.maxDay && tot > e.maxDay) return `That is ${tot} pills a day, over the limit of ${e.maxDay}.`;
+  if (e.maxPer && e.perDose > e.maxPer) return `The usual dose is up to ${e.maxPer} at a time.`;
+  if (e.minGap && e.times.length > 1) { const a = e.times.map(C.mins).sort((x, y) => x - y); let g = 1440 - a[a.length - 1] + a[0]; for (let i = 1; i < a.length; i++) g = Math.min(g, a[i] - a[i - 1]); if (g < e.minGap * 60) return `Two doses are less than ${e.minGap} hours apart. Spread them out.`; }
+  return '';
+}
+
+/* ---------- shared clicks and changes; return true when handled ---------- */
+export function uiClick(a, b) {
+  const doc = CX && CX.doc();
+  if (a === 'close') { closeSheet(); return true; }
+  if (sheetKind === 'buy') {
+    if (a === 'bm') { readBuy(); B.med = b.dataset.id; drawBuy(); return true; }
+    if (a === 'buysave') {
+      readBuy(); const n = parseInt(B.pills) || 0; if (n < 1) { alert('How many pills did you buy?'); return true; }
+      const m = doc.meds[B.med], cost = B.cost === '' ? n * (m.price || 0) : Math.max(0, parseFloat(B.cost) || 0), now = Date.now();
+      const id = C.rid('b'); doc.buys[id] = { id, med: m.id, pills: n, cost, t: now, d: today().ymd, u: now };
+      if (B.cost !== '' && cost > 0) doc.meds[m.id] = { ...m, price: Math.round(cost / n * 100) / 100, u: now };
+      closeSheet(); CX.save(); toast(`Added ${pl(n, 'pill')} of ${m.name} 👍`); return true;
+    }
+  }
+  if (sheetKind !== 'edit' || !E) return false;
+  if (a === 'addt') { grab(); const t = $('#f_t').value; if (t && !E.times.includes(t)) { E.times.push(t); E.times.sort(); } drawEditor(); return true; }
+  if (a === 'rmt') { grab(); E.times.splice(+b.dataset.i, 1); drawEditor(); return true; }
+  if (a === 'fq') {
+    grab(); const t = b.dataset.v, ns = { type: t };
+    if (t === 'everyN') ns.n = 2; if (t === 'weekly') ns.days = [1];
+    if (t === 'hours') { Object.assign(ns, { gap: 6, cnt: 3, first: '08:00' }); E.times = C.hrs('08:00', 6, 3); }
+    else if (t === 'prn') E.times = []; else if (!E.times.length) E.times = ['08:00'];
+    E.sched = ns; drawEditor(); return true;
+  }
+  if (a === 'wd') { grab(); const d = +b.dataset.v, s = E.sched, c = s.days || []; s.days = c.includes(d) ? c.filter(x => x !== d) : [...c, d]; drawEditor(); return true; }
+  if (a === 'savem') {
+    grab(); const err = checkMed(E); if (err) { alert(err); return true; }
+    const now = Date.now(), old = doc.meds[E.id], m = { ...E }; delete m.isNew; delete m._stock;
+    if (!old) m.c = now;
+    const cur = old ? C.stockOf(doc, old) : null;
+    if (!old || E._stock !== cur) { m.stock0 = E._stock; m.stockAt = now; }
+    m.u = now; doc.meds[m.id] = m; closeSheet(); CX.save(); toast('Saved ✓'); return true;
+  }
+  if (a === 'delm') { if (confirm('Delete ' + E.name + '?')) { doc.meds[E.id] = { ...doc.meds[E.id], del: true, u: Date.now() }; closeSheet(); CX.save(); } return true; }
+  return false;
+}
+function readBuy() { const p = $('#b_pills'), c = $('#b_cost'); if (p) B.pills = p.value; if (c) B.cost = c.value; }
+export function uiChange(ev) {
+  if (!ev.target.closest('#sheet')) return false;
+  if (sheetKind === 'buy') { readBuy(); const h = $('#b_hint'); if (h) h.textContent = buyHint(); return true; }
+  if (sheetKind !== 'edit' || !E) return false;
+  if (ev.target.id === 'f_pack' || ev.target.id === 'f_packn') {
+    const pr = parseFloat($('#f_pack').value), n = parseInt($('#f_packn').value);
+    if (pr > 0 && n > 0) { $('#f_price').value = Math.round(pr / n * 100) / 100; }
+  }
+  grab();
+  if (ev.target.dataset.s === 'lib') { const id = ev.target.value; if (id) { const keep = E.id; E = Object.assign(fromLib(CX.doc(), id, 'prn'), { id: keep, _stock: E._stock }); drawEditor(); } return true; }
+  const h = $('#hint'); if (h) h.innerHTML = edHint();
+  return true;
+}
+// live update while typing in the buy sheet and price calculator
+export function uiInput(ev) { if (ev.target.closest('#sheet') && (sheetKind === 'buy' || ev.target.id === 'f_pack' || ev.target.id === 'f_packn')) uiChange(ev); }
