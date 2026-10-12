@@ -1,0 +1,11 @@
+<!DOCTYPE html><meta charset="utf-8"><title>VAPID keys</title>
+<body style="font-family:sans-serif;max-width:640px;margin:30px auto;padding:0 16px">
+<h2>Generate your push keys</h2><p>Runs only in your browser. Nothing is uploaded.</p>
+<button id="b" style="font-size:18px;padding:10px 16px">Generate keys</button>
+<p><b>Public key</b> (goes in docs/config.js and the VAPID_PUBLIC secret)</p><textarea id="pub" rows="3" style="width:100%"></textarea>
+<p><b>Private key</b> (secret VAPID_PRIVATE only. Never share it.)</p><textarea id="prv" rows="2" style="width:100%"></textarea>
+<script>
+const u=a=>btoa(String.fromCharCode(...new Uint8Array(a))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+b.onclick=async()=>{const k=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign']);
+pub.value=u(await crypto.subtle.exportKey('raw',k.publicKey));prv.value=(await crypto.subtle.exportKey('jwk',k.privateKey)).d;};
+</script></body>
