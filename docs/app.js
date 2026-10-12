@@ -41,12 +41,14 @@ function migrate() {
 const persist = () => { try { localStorage.setItem(LK, JSON.stringify(L)); } catch (e) {} };
 const doc = () => L.doc;
 const save = () => { persist(); render(); queueSync(); };
-const CX = { doc, save, render: () => render() };
+const quiet = () => { persist(); queueSync(300); };
+const CX = { doc, save, quiet, render: () => render() };
 U.setCtx(CX, 'phone');
 
 /* ---------- sync with the worker (also the backup) ---------- */
 let syncT, syncing = false, again = false;
-const queueSync = (d = 800) => { clearTimeout(syncT); syncT = setTimeout(sync, d); };
+const typing = () => document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);
+const queueSync = (d = 300) => { clearTimeout(syncT); syncT = setTimeout(sync, d); };
 async function sync() {
   if (!WORKER || L.moved) return;
   if (!L.dev) return;
@@ -59,9 +61,12 @@ async function sync() {
     if (r.status === 401) { signedOut('You were signed out on this device.'); return; }
     if (!r.ok) return;
     const j = await r.json();
-    L.doc = C.merge(L.doc, j.doc); L.meta = j.meta; L.synced = Date.now(); persist();
+    const wasGen = L.doc.gen || 0;
+    L.doc = C.merge(L.doc, j.doc); L.meta = j.meta; L.synced = Date.now();
+    if ((L.doc.gen || 0) > wasGen) { L.set.guided = false; gs = 0; tab = 'today'; U.closeSheet(); if (document.activeElement) document.activeElement.blur(); persist(); render(); setTimeout(() => toast('Your app was refreshed by ' + (L.doc.cfg.helper || 'your helper') + ' ✨'), 300); }
+    persist();
     if (j.resub) await resubscribe();
-    if (!U.sheetOpen() && !busy()) render();
+    if (!U.sheetOpen() && !busy() && !typing()) render();
   } catch (e) {} finally { syncing = false; if (again) { again = false; queueSync(300); } }
 }
 async function api(path, body) {
@@ -77,7 +82,7 @@ async function signIn(user, pin) {
     const j = await api('/auth/login', { user, pin });
     L.dev = { pid: j.pid, key: j.key }; L.doc = C.merge(C.newDoc(), j.doc); L.meta = j.meta; L.moved = false; L.user = j.meta.user;
     if (L.doc.cfg.model) L.set.model = L.doc.cfg.model;
-    persist(); loginMsg = ''; sfx.win(); render(); window.scrollTo(0, 0);
+    U.act(L.doc, '📱', `Signed in on ${devName()}`); persist(); loginMsg = ''; sfx.win(); render(); window.scrollTo(0, 0); queueSync();
     if (Notification && Notification.permission === 'granted') checkPush(); else sync();
     toast(`Welcome${L.doc.cfg.name ? ', ' + L.doc.cfg.name : ''} 💖`);
   } catch (e) {
@@ -137,7 +142,7 @@ async function enablePush() {
     const perm = await Notification.requestPermission();
     if (perm !== 'granted') return say('Reminders are blocked', isIOS ? 'Open iPhone Settings → Notifications → BlovMed and turn on Allow Notifications.' : 'Allow notifications for BlovMed in your phone settings.', '🔕');
     const reg = await navigator.serviceWorker.ready; const s = await reg.pushManager.getSubscription();
-    L.sub = s ? s.toJSON() : await subscribe(reg); pushState = 'on'; persist(); await sync(); render(); toast('Reminders are on 🔔'); return true;
+    L.sub = s ? s.toJSON() : await subscribe(reg); pushState = 'on'; U.act(L.doc, '🔔', `Turned on reminders on ${devName()}`); persist(); await sync(); render(); toast('Reminders are on 🔔'); return true;
   } catch (e) { say('Could not turn on reminders', esc(e.message), '😕'); }
 }
 
@@ -171,12 +176,19 @@ const vehCol = () => { const c = L.doc && L.doc.cfg.color; return c >= 0 ? c : (
 const veh = () => carById(vehId());
 const isShip = () => veh().kind === 'ship';
 const carSVG = () => veh().draw(COLORS[vehCol()] || COLORS[0]);
-function sceneHtml() {
+function sceneHtml(all) {
   if (!L.set.game) return '';
-  const ship = isShip();
-  return `<div class="scene ${ship ? 'sea' : ''}" data-a="car" aria-label="Tap to honk">${ship ? '<div class="water"></div>' : '<div class="road"></div>'}<div class="lines"></div><span class="speedo" style="opacity:0"></span><div class="flag">${ship ? '🏝️' : '🏁'}</div><div class="car idle">${carSVG()}</div></div>`;
+  const ship = isShip(), n = today(), ds = all || todayDoses(n), nxt = ds.find(d => !d.at);
+  const posts = ds.map((d, i) => { const s = d.at ? 'done' : d === nxt ? 'next' : status(d, n) === 'overdue' ? 'late' : '';
+    return `<div class="post ${s}" data-i="${i}" data-a="dd" data-k="${d.key}"><b>${C.fmtT(d.t).replace(':00', '').replace(' ', '')}</b><i>${d.at ? '✅' : i === ds.length - 1 ? (ship ? '🏝️' : '🏁') : ship ? '🛟' : '🚩'}</i></div>`; }).join('');
+  return `<div class="scene ${ship ? 'sea' : ''}" data-a="car" aria-label="Tap to honk">${ship ? '<div class="water"></div>' : '<div class="road"></div>'}<div class="lines"></div><span class="speedo" style="opacity:0"></span>${posts || `<div class="flag">${ship ? '🏝️' : '🏁'}</div>`}<div class="car idle">${carSVG()}</div></div>`;
 }
-function placeCar() { const c = $('.car'); if (c && !busy()) c.style.transform = `translateX(${carX(prog())}px)`; }
+function placeCar() {
+  const c = $('.car'); if (!c) return;
+  const posts = document.querySelectorAll('.post'), N = posts.length;
+  posts.forEach(p => { p.style.left = (carX((+p.dataset.i + 1) / N) + c.offsetWidth - 10) + 'px'; });
+  if (!busy()) c.style.transform = `translateX(${carX(prog())}px)`;
+}
 function carPos() { const sc = $('.scene'), c = $('.car'); return c.getBoundingClientRect().left - sc.getBoundingClientRect().left; }
 function puff(x) { const sc = $('.scene'); if (!sc) return; const d = document.createElement('div'); d.className = 'smoke'; d.style.left = (x - 6 + Math.random() * 10) + 'px'; d.style.bottom = (18 + Math.random() * 8) + 'px'; sc.appendChild(d); setTimeout(() => d.remove(), 950); }
 function speedo(peak, ms) { const el = $('.speedo'); if (!el) return; const t0 = performance.now(); const f = now => { const k = Math.min(1, (now - t0) / ms), v = Math.round(peak * Math.sin(Math.PI * k)); el.textContent = v + (isShip() ? ' knots' : ' km/h'); el.style.opacity = k < 1 ? 1 : 0; if (k < 1) requestAnimationFrame(f); }; requestAnimationFrame(f); }
@@ -229,9 +241,10 @@ async function take(key) {
   if ((m.maxDay || m.minGap) && !(await guardOK(D, m))) return;
   if (C.takenAt(D, key) || busy()) return;
   const p0 = prog(), ts = now();
-  D.log[key] = { t: ts, p: m.perDose, u: ts };
+  D.log[key] = { t: ts, p: m.perDose, u: ts, ...(m.prn ? { f: 1 } : {}) };
+  U.act(D, '✅', `Took ${m.name} (${C.fmtT(t)} dose)`);
   if (D.snz[key]) D.snz[key] = { until: 0, u: ts };
-  const win = d === n.ymd && p0 < 1 && C.dosesOn(D, n.ymd).every(x => x.at), hold = L.set.game ? (reduce ? 800 : win ? 3300 : 1800) : 1500;
+  const win = d === n.ymd && p0 < 1 && C.dosesOn(D, n.ymd).every(x => x.at) && C.dosesOn(D, n.ymd).length > 0, hold = L.set.game ? (reduce ? 800 : win ? 3300 : 1800) : 1500;
   heroLock = ts + hold; persist(); U.closeSheet(); render();
   const p1 = prog();
   sfx.take(); buzz([40, 40, 60]); pop('+10');
@@ -239,9 +252,22 @@ async function take(key) {
   if (win) setTimeout(() => { sfx.win(); buzz([60, 50, 60, 50, 120]); pop('All done! 🏁'); }, 1700);
   setTimeout(render, hold + 60); queueSync();
 }
+// Log an as-needed dose. If the medicine has a repeat interval, plan the next doses on Today automatically.
+async function takeAsNeeded(m, sickId) {
+  const D = L.doc, t = now(), n = today(), every = m.every || (m.lib && U.LIB[m.lib] && U.LIB[m.lib].every) || 0;
+  let follow = m.follow && m.follow.on;
+  if (!follow && every) follow = sickId ? true : await ask({ icon: '🔁', title: 'Remind you for the next dose?', text: `I'll add the next ${esc(m.name)} to Today, about every ${every} hours, for up to ${m.followDays || 3} days. It never goes over the safe limit.`, ok: 'Yes, remind me', cancel: 'No thanks' });
+  if (follow) {
+    const key = C.dkey(n.ymd, m.id, C.pad(Math.floor(n.min / 60)) + ':' + C.pad(n.min % 60));
+    D.log[key] = { t, p: m.perDose, u: t, f: 1 };
+    if (!(m.follow && m.follow.on)) D.meds[m.id] = { ...m, follow: { on: true, every, start: t, end: t + (m.followDays || 3) * 864e5, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, sick: sickId || '' }, u: t };
+    const nx = C.followNext(D, D.meds[m.id]); if (nx) toast(`Next ${m.name} at ${U.tm(nx)} 🔁`);
+  } else { const id = C.rid('r'); D.prn[id] = { id: m.id, t, p: m.perDose, u: t }; }
+  U.act(D, '💊', `Took ${m.name} (as needed)${sickId ? ' for ' + (D.sick[sickId] ? D.sick[sickId].name : 'feeling sick') : ''}`);
+}
 async function guardOK(D, m) { const g = U.guard(D, m); return !g || ask({ icon: '✋', title: 'Wait a moment', text: esc(g) + '<br><br>Only continue if your doctor told you to.', ok: 'Doctor said OK', cancel: 'Don\'t take it', danger: true }); }
-function undo(key) { const D = L.doc, e = D.log[key]; if (!e) return; D.log[key] = { ...e, t: 0, u: now() }; sfx.undo(); buzz(20); U.closeSheet(); save(); }
-function snooze(key) { L.doc.snz[key] = { until: now() + 10 * 6e4, u: now() }; buzz(20); toast('Okay! I will remind you in 10 minutes ⏰'); U.closeSheet(); save(); }
+function undo(key) { const D = L.doc, e = D.log[key]; if (!e) return; D.log[key] = { ...e, t: 0, u: now() }; const um = D.meds[key.split('|')[1]]; U.act(D, '↩️', `Undid ${um ? um.name : 'a dose'}`); sfx.undo(); buzz(20); U.closeSheet(); save(); }
+function snooze(key) { L.doc.snz[key] = { until: now() + 10 * 6e4, u: now() }; const sm = L.doc.meds[key.split('|')[1]]; U.act(L.doc, '⏰', `Snoozed ${sm ? sm.name : 'a dose'} 10 min`); buzz(20); toast('Okay! I will remind you in 10 minutes ⏰'); U.closeSheet(); save(); }
 
 /* ---------- Today ---------- */
 function status(d, n) { if (d.at) return 'taken'; if (d.d < n.ymd) return 'overdue'; const x = n.min - C.mins(d.t); return x >= 30 ? 'overdue' : x >= 0 ? 'due' : 'upcoming'; }
@@ -261,32 +287,31 @@ function shopCard(n) {
    ${items.map(s => `<button class="check ${s.done ? 'on' : ''}" data-a="shop" data-id="${s.id}"><span class="box">✓</span><span class="tx">${{ med: '💊', food: '🍌', drink: '🥤' }[s.kind] || '🛍️'} ${esc(s.text)}${s.why ? `<small>For ${esc(s.why)}</small>` : ''}</span></button>`).join('')}</div>`;
 }
 function prnHtml() {
-  const ps = C.medList(L.doc).filter(m => m.prn); if (!ps.length) return '';
-  return '<h2>As needed</h2>' + ps.map(m => { const l = C.lastTake(L.doc, m), n = C.pills24(L.doc, m, now()); return `<div class="card"><div class="row"><b>${esc(m.name)}</b><span class="pill ${m.maxDay && n >= m.maxDay ? 'bad' : 'ok'}">${n}${m.maxDay ? ' of ' + m.maxDay : ''} in 24h</span></div><p class="sub" style="margin:4px 0 10px">${l ? 'Last taken ' + U.ago(l) : 'Not taken yet'}${m.notes ? ' · ' + esc(m.notes) : ''}</p><button class="btn full" data-a="prn" data-id="${m.id}">I took ${m.perDose}</button></div>`; }).join('');
+  const D = L.doc, ps = C.medList(D).filter(m => m.prn); if (!ps.length) return '';
+  return '<h2>As needed</h2><div class="list">' + ps.map(m => { const l = C.lastTake(D, m), n = C.pills24(D, m, now()), nx = C.followNext(D, m);
+    return `<div class="lrow"><button class="lbody" data-a="med" data-id="${m.id}"><b>${esc(m.name)}</b><span>${l ? 'Last ' + U.ago(l) : 'Not taken yet'}${m.maxDay ? ` · ${n}/${m.maxDay} in 24h` : ''}${nx ? ` · next reminder ${U.tm(nx)}` : ''}</span></button><button class="mini-btn" data-a="prn" data-id="${m.id}">Took ${m.perDose}</button></div>`; }).join('') + '</div>';
 }
+function todayDoses(n) { return [...lastNight(n), ...C.dosesOn(L.doc, n.ymd)].sort((a, b) => (a.d + a.t < b.d + b.t ? -1 : 1)); }
 function viewToday() {
-  const D = L.doc, n = today(), ds = C.dosesOn(D, n.ymd), st = C.stats(D, n.ymd), name = D.cfg.name, set = L.set;
+  const D = L.doc, n = today(), st = C.stats(D, n.ymd), name = D.cfg.name, set = L.set;
   if (!C.medList(D).length) return `<h1>Hi${name ? ' ' + esc(name) : ''} 💖</h1><p class="sub">Let's add your first medicine. It takes under a minute.</p>${sceneHtml()}<button class="btn full big" data-a="new">+ Add my first medicine</button>${pushBanner()}`;
-  const all = [...lastNight(n), ...ds], done = ds.filter(d => d.at).length;
-  const act = all.find(d => !d.at && status(d, n) !== 'upcoming'), nxt = all.find(d => !d.at);
-  let hero;
-  if (now() < heroLock) hero = `<div class="hero done"><small>Logged ✓</small><b>Nice one! +10 ⭐</b></div>`;
-  else if (!ds.length && !act) hero = `<div class="hero done"><small>Rest day 😴</small><b>No scheduled doses today.</b></div>`;
-  else if (!nxt) hero = `<div class="hero done"><small>${done} of ${ds.length} done</small><b>All done today. Amazing! 🏁</b></div>`;
-  else {
-    const d = act || nxt, late = act && status(act, n) === 'overdue', z = D.snz[d.key], snoozed = z && z.until > now();
-    const label = snoozed ? `Snoozed until ${U.tm(z.until)}` : act ? (late ? (d.d < n.ymd ? 'From last night. Take it now?' : 'Running late. Take it now') : 'Time to take') : 'Next up at ' + C.fmtT(d.t);
-    hero = `<div class="hero ${late && !snoozed ? 'late' : ''}"><small>${label}</small><b>${esc(d.m.name)}${d.m.perDose > 1 ? ' ×' + d.m.perDose : ''}</b>
-     <span class="meta">${pl(d.m.perDose, 'pill')} · ${C.fmtT(d.t)}${d.m.notes ? ' · ' + esc(d.m.notes) : ''}</span>
-     <button data-a="tk" data-k="${d.key}">${act ? 'I took it ✓' : 'I took it early'}</button>
-     ${act ? `<div class="two" style="margin-top:8px"><button class="ghost" data-a="snz" data-k="${d.key}">⏰ 10 min</button><button class="ghost" data-a="dd" data-k="${d.key}">Details</button></div>` : `<button class="ghost" style="margin-top:8px" data-a="dd" data-k="${d.key}">Details</button>`}</div>`;
-  }
-  const scene = sceneHtml();
+  const all = todayDoses(n), nxt = all.find(d => !d.at), late = all.filter(d => !d.at && status(d, n) === 'overdue');
+  const line = now() < heroLock ? '<b style="color:var(--ok)">Nice one! +10 ⭐</b>'
+    : !all.length ? '😴 Rest day. No doses today.'
+    : !nxt ? '🏁 <b>All done today!</b> Amazing.'
+    : late.length ? `<b style="color:var(--bad)">⏰ ${esc(late[0].m.name)} is late.</b> Tap Take below.`
+    : status(nxt, n) === 'due' ? `<b>💊 Time for ${esc(nxt.m.name)}.</b> Tap Take below.`
+    : `Next: <b>${esc(nxt.m.name)}</b> at ${C.fmtT(nxt.t)}${st.left ? ` · ${pl(st.left, 'dose')} to go` : ''}`;
   return `<h1>${name ? 'Hi ' + esc(name) + ' 👋' : 'Today'}</h1>
   <div class="chips"><button data-a="stars">⭐ ${st.pts}</button><button data-a="streak">🔥 ${st.streak}</button><button data-a="level">Lv ${st.lvl} · ${st.title}</button>${set.game ? '<button data-a="garage" aria-label="Garage">🚗</button>' : ''}</div>
-   <button class="lvl" data-a="level" style="display:block;width:100%;border:0;padding:0" aria-label="Level progress"><b style="width:${Math.round(st.into / C.PER_LEVEL * 100)}%"></b></button>
-  ${scene}${hero}${streakHint(st)}${pushBanner()}${buyLink(n)}${activeSick()}${prnHtml()}
-  ${all.length ? '<h2>Today\'s doses</h2>' : ''}${all.map(d => { const s = status(d, n); return `<button class="dose ${s}" data-a="dd" data-k="${d.key}"><span class="t">${C.fmtT(d.t)}</span><span class="n">${esc(d.m.name)}<span>${d.at ? 'Taken ' + U.tm(d.at) : pl(d.m.perDose, 'pill') + (d.m.notes ? ' · ' + esc(d.m.notes) : '')}</span>${d.d < n.ymd ? '<em>From last night</em>' : ''}</span><span class="c">✓</span></button>`; }).join('')}`;
+  ${sceneHtml(all)}<p class="status">${line}</p>
+  ${all.length ? `<div class="list">${all.map(d => doseRow(d, n, d === nxt)).join('')}</div>` : ''}
+  ${streakHint(st)}${pushBanner()}${activeSick()}${buyLink(n)}${prnHtml()}`;
+}
+function doseRow(d, n, isNext) {
+  const s = status(d, n), z = L.doc.snz[d.key], snz = z && z.until > now();
+  return `<div class="lrow dose2 ${s}${isNext ? ' next' : ''}"><button class="lbody" data-a="dd" data-k="${d.key}"><span class="t">${C.fmtT(d.t)}</span><span><b>${esc(d.m.name)}</b><span>${d.at ? '✓ Taken ' + U.tm(d.at) : snz ? '⏰ Snoozed until ' + U.tm(z.until) : pl(d.m.perDose, 'pill') + (d.m.notes ? ' · ' + esc(d.m.notes) : '')}${d.follow ? ' · follow-up' : ''}${d.d < n.ymd ? ' · last night' : ''}</span></span></button>
+   ${d.at ? `<button class="chk" data-a="dd" data-k="${d.key}" aria-label="Taken">✓</button>` : `<button class="mini-btn ${s === 'overdue' ? 'red' : ''}" data-a="tk" data-k="${d.key}">Take</button>`}</div>`;
 }
 function streakHint(st) {
   if (!st.todayTotal || !st.left || now() < heroLock) return '';
@@ -402,12 +427,13 @@ function viewSick() {
 let logMore = false, LS = null;
 function logSheet(k) {
   const D = L.doc, x = k ? U.SYM[k] : null, meds = C.medList(D).filter(m => m.prn || (k ? usualIds(k) : []).includes(m.id));
+  const extra = x ? x.m.filter(id => U.LIB[id].every && !myLibMed(id)) : [];
   LS = { k, sev: 0, took: {} };
   U.openSheet(`<h1 style="margin-top:0">${x ? x.e + ' ' + x.n : '✍️ How do you feel?'}</h1>
    ${x ? '' : '<label>What is it?</label><input type="text" id="ls_name" placeholder="e.g. Back pain, rash, chills">'}
    <label>How bad is it?</label><div class="opt" id="ls_sev">${[1, 2, 3].map(v => `<button data-a="lssev" data-v="${v}">${U.SEVE[v]} ${U.SEV[v]}</button>`).join('')}</div>
    <label>Anything to add? <span class="mini">(optional)</span></label><textarea id="ls_note" rows="2" placeholder="e.g. Started after lunch, a bit dizzy too"></textarea>
-   ${meds.length ? `<label>Did you take something for it?</label><div class="card" style="margin:0">${meds.map(m => `<button class="check" data-a="lstook" data-id="${m.id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(m.name)}<small>${m.perDose} now</small></span></button>`).join('')}</div>` : ''}
+   ${meds.length + extra.length ? `<label>Did you take something for it just now?</label><div class="card" style="margin:0">${meds.map(m => `<button class="check" data-a="lstook" data-id="${m.id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(m.name)}<small>${m.perDose} now${(m.every || (m.lib && U.LIB[m.lib] && U.LIB[m.lib].every)) ? ' · next doses go on Today' : ''}</small></span></button>`).join('')}${extra.map(id => `<button class="check" data-a="lstook" data-id="lib:${id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(U.lib(D, id).n)}<small>Adds it to your medicines · next doses go on Today</small></span></button>`).join('')}</div>` : ''}
    <button class="btn full big" style="margin-top:16px" data-a="lssave">Save to logbook</button>`);
 }
 
@@ -513,27 +539,35 @@ function viewGuide() {
 const tog = (k, l, cfg) => { const v = cfg ? L.doc.cfg[k] : L.set[k]; return `<div class="row"><span>${l}</span><div class="opt"><button class="${v ? 'on' : ''}" data-a="${cfg ? 'ctog' : 'tog'}" data-k="${k}">${v ? 'On' : 'Off'}</button></div></div>`; };
 function viewSettings() {
   const st = L.set, D = L.doc, o = (k, arr, labels) => arr.map((v, i) => `<button class="${st[k] === v ? 'on' : ''}" data-a="opt" data-k="${k}" data-v='${JSON.stringify(v)}'>${labels[i]}</button>`).join('');
-  const linked = L.meta && L.meta.admins > 0, helper = D.cfg.helper || 'your helper';
-  const pushTxt = { on: '<span class="pill ok">Phone reminders are on</span>', off: '<button class="btn full" data-a="perm">Turn on phone reminders</button>', broken: '<button class="btn red full" data-a="perm">Reminders stopped. Fix them</button>', denied: '<span class="pill bad">Blocked in phone settings</span>', unsupported: '<span class="pill warn">Add to Home Screen first</span>', noconfig: '<span class="pill warn">Not set up (config.js)</span>', checking: '' }[pushState];
+  const pushTxt = { on: '<span class="pill ok">On</span>', off: '<button class="mini-btn" data-a="perm">Turn on</button>', broken: '<button class="mini-btn red" data-a="perm">Fix</button>', denied: '<span class="pill bad">Blocked</span>', unsupported: '<span class="pill warn">Add to Home Screen</span>', noconfig: '<span class="pill warn">Not set up</span>', checking: '' }[pushState];
+  const row = (l, r) => `<div class="srow"><span>${l}</span>${r}</div>`;
+  const sw = (k, cfg) => { const v = cfg ? D.cfg[k] : st[k]; return `<button class="toggle ${v ? 'on' : ''}" data-a="${cfg ? 'ctog' : 'tog'}" data-k="${k}" aria-pressed="${!!v}"><i></i></button>`; };
   return `<h1>Settings</h1>
-  <div class="card"><label style="margin-top:0">Your name</label><input type="text" data-s="name" value="${esc(D.cfg.name)}" placeholder="What should I call you?"></div>
-  <div class="card"><b>🔔 Reminders</b><div style="margin-top:10px">${pushTxt}</div><div style="margin-top:10px">${tog('nags', 'Nudge me again if I forget', 1)}</div></div>
-  <details class="sec card"><summary><b>🎨 Look</b></summary><div><label>Pink style</label><div class="opt">${o('accent', [0, 1, 2, 3], ACCN)}</div>
-  <label>Light or dark</label><div class="opt">${o('mode', ['auto', 'light', 'dark'], ['Auto', 'Light', 'Dark'])}</div><div style="margin-top:12px">${tog('big', 'Bigger text')}</div></div></details>
-  <div class="card"><b>🏎️ Car game</b><div style="margin-top:8px">${tog('game', 'Show the car')}</div>
-  <button class="btn ghost full" style="margin-top:10px" data-a="garage">🚗 Garage: ${veh().name}</button>
-  <div class="two" style="margin-top:8px"><button class="btn ghost" data-a="stars">⭐ Stars</button><button class="btn ghost" data-a="streak">🔥 Streak</button></div></div>
-  <details class="sec card"><summary><b>🔊 Sound and feel</b></summary><div>${tog('sound', 'Sounds')}<div style="margin-top:8px">${tog('haptics', 'Vibration')}</div>
-  <button class="btn ghost full" style="margin-top:12px" data-a="test">Test sound and vibration</button><p class="mini" style="margin:8px 0 0">Vibration works best on Android. On iPhone it depends on your iOS version.</p></div></details>
-  <details class="sec card"><summary><b>💰 Money</b></summary><div><label style="margin-top:0">Payday dates</label><div class="two"><input type="number" min="1" max="31" data-s="pd1" value="${D.cfg.paydays[0]}"><input type="number" min="1" max="31" data-s="pd2" value="${D.cfg.paydays[1]}"></div>
-  <label>Currency symbol</label><input type="text" maxlength="3" data-s="cur" value="${esc(D.cfg.cur)}"></div></details>
-  <div class="card"><b>🔐 Account</b><p class="mini" style="margin:6px 0 10px">Signed in as <b>@${esc((L.meta && L.meta.user) || L.user || '')}</b>${L.synced ? ' · synced ' + U.ago(L.synced) : ''}. Use the same sign-in on all your devices.</p>
-   <div class="two"><button class="btn ghost" data-a="pin">🔑 Change PIN</button><button class="btn ghost" data-a="signout">👋 Sign out</button></div>
-   <p class="mini" style="margin:10px 0 0">🤝 ${esc(D.cfg.helper || 'Your helper')} can see your medicines, doses, profile, sick logbook and buy list, so they can help you.</p></div>
-  <details class="sec card"><summary><b>✨ More</b></summary><div>
-   ${installEvt && !standalone ? '<button class="btn ghost full" style="margin-top:10px" data-a="install">📲 Install BlovMed as an app</button>' : ''}
-   <button class="btn ghost full" style="margin-top:10px" data-a="guide">Show the welcome guide again</button>
-   <button class="btn ghost full" style="margin-top:8px" data-a="reset">Start fresh: reset stars and streak</button></div></details>`;
+  <div class="list">
+   <div class="srow"><span>Name</span><input type="text" data-s="name" data-live="1" value="${esc(D.cfg.name)}" placeholder="Your name" style="max-width:55%"></div>
+   ${row('🔔 Phone reminders', pushTxt)}
+   ${row('🔁 Remind me again if I forget', sw('nags', 1))}
+   ${row('🚗 My ride', `<button class="mini-btn ghost" data-a="garage">${esc(veh().name)}</button>`)}
+   ${row('🏎️ Show the game', sw('game'))}
+   ${row('🔊 Sounds', sw('sound'))}
+   ${row('📳 Vibration', sw('haptics'))}
+   ${row('🔤 Bigger text', sw('big'))}
+   ${row('🌙 Dark mode', `<div class="opt">${o('mode', ['auto', 'light', 'dark'], ['Auto', 'Off', 'On'])}</div>`)}
+  </div>
+  <h2>Account</h2><div class="list">
+   ${row(`🔐 @${esc((L.meta && L.meta.user) || L.user || '')}`, `<span class="mini">${L.synced ? 'synced ' + U.ago(L.synced) : ''}</span>`)}
+   ${row('🔑 PIN', '<button class="mini-btn ghost" data-a="pin">Change</button>')}
+   ${row('👋 Sign out of this device', '<button class="mini-btn ghost" data-a="signout">Sign out</button>')}
+  </div>
+  <p class="mini">🤝 ${esc(D.cfg.helper || 'Your helper')} can see your medicines, doses, profile, sick logbook and buy list, so they can help you.</p>
+  <details class="sec card"><summary><b>More</b></summary><div>
+   <label style="margin-top:0">Pink style</label><div class="opt">${o('accent', [0, 1, 2, 3], ACCN)}</div>
+   <label>Paydays</label><div class="two"><input type="number" min="1" max="31" data-s="pd1" value="${D.cfg.paydays[0]}"><input type="number" min="1" max="31" data-s="pd2" value="${D.cfg.paydays[1]}"></div>
+   <label>Currency</label><input type="text" maxlength="3" data-s="cur" value="${esc(D.cfg.cur)}">
+   <button class="btn ghost full" style="margin-top:12px" data-a="test">Test sound and vibration</button>
+   ${installEvt && !standalone ? '<button class="btn ghost full" style="margin-top:8px" data-a="install">📲 Install as an app</button>' : ''}
+   <button class="btn ghost full" style="margin-top:8px" data-a="guide">Show the welcome guide again</button>
+   <button class="btn ghost full" style="margin-top:8px" data-a="reset">Reset my stars and streak</button></div></details>`;
 }
 
 /* ---------- render ---------- */
@@ -590,7 +624,7 @@ document.addEventListener('click', async ev => {
   else if (a === 'pinsave') {
     const o = $('#pn_old').value, n1 = $('#pn_new').value, n2 = $('#pn_new2').value;
     if (!/^\d{6}$/.test(n1)) return say('6 digits please', 'Your new PIN must be exactly 6 numbers.', '🔑'); if (n1 !== n2) return say("PINs don't match", 'Type the same new PIN twice.', '🔑');
-    try { await api('/auth/pin', { pid: L.dev.pid, key: L.dev.key, role: 'phone', old: o, pin: n1 }); U.closeSheet(); toast('PIN changed 🔑'); }
+    try { await api('/auth/pin', { pid: L.dev.pid, key: L.dev.key, role: 'phone', old: o, pin: n1 }); U.closeSheet(); U.act(L.doc, '🔑', 'Changed his PIN'); quiet(); toast('PIN changed 🔑'); }
     catch (e) { say(e.status === 403 ? 'Current PIN is wrong' : 'No connection', e.status === 403 ? 'Check your current PIN and try again.' : 'Try again when you are online.', '🔑'); }
   }
   else if (a === 'me') { if (tab !== 'me') prevTab = tab; tab = 'me'; U.pushView(); render(); window.scrollTo(0, 0); }
@@ -609,12 +643,17 @@ document.addEventListener('click', async ev => {
     if (!nm2) return say('What is it?', 'Type a short name, like "Back pain".', '✍️');
     if (!LS.sev) return say('How bad is it?', 'Tap Mild, Moderate or Severe.', '🤒');
     const t = now(), id = C.rid('k'), took = [];
+    D.sick[id] = { id, sym: k || 'other', name: nm2, t, sev: LS.sev, note: '', took: [], ups: [], open: true, by: 'phone', u: t };
     for (const mid of Object.keys(LS.took).filter(x => LS.took[x])) {
-      const m = D.meds[mid]; if (!m) continue;
-      if (m.prn) { if (!(await guardOK(D, m))) continue; const r = C.rid('r'); D.prn[r] = { id: m.id, t, p: m.perDose, u: t }; }
+      let m = D.meds[mid];
+      if (!m && mid.startsWith('lib:')) { const nm = U.fromLib(D, mid.slice(4), 'prn'); delete nm.isNew; nm.c = t; nm.u = t; D.meds[nm.id] = nm; m = nm; }
+      if (!m) continue;
+      if (!(await guardOK(D, m))) continue;
+      if (m.prn) await takeAsNeeded(m, id); else { const r = C.rid('r'); D.prn[r] = { id: m.id, t, p: m.perDose, u: t }; }
       took.push({ t, name: m.name });
     }
-    D.sick[id] = { id, sym: k || 'other', name: nm2, t, sev: LS.sev, note: ($('#ls_note').value || '').trim(), took, ups: [], open: true, by: 'phone', u: t };
+    D.sick[id] = { ...D.sick[id], note: ($('#ls_note').value || '').trim(), took, u: now() };
+    U.act(D, U.SYM[k] ? U.SYM[k].e : '🤒', `Logged: ${nm2} (${U.SEV[LS.sev].toLowerCase()})`);
     U.closeSheet(); buzz(30); save();
     if (LS.sev === 3) say('Take care 💖', `It's in your logbook and ${esc(D.cfg.helper || 'your helper')} will be told. If it's very bad, see a doctor.${D.prof && D.prof.emphone ? '<br><br>Emergency contact: <a href="tel:' + esc(D.prof.emphone.replace(/[^\d+]/g, '')) + '" style="color:var(--acc);font-weight:700">' + esc(D.prof.emphone) + '</a>' : ''}`, '🚑');
     else toast('Saved to your logbook 📖');
@@ -624,7 +663,7 @@ document.addEventListener('click', async ev => {
   else if (a === 'model' || a === 'color') {
     const D2 = L.doc, t2 = now();
     if (a === 'model') { L.set.model = b.dataset.v; D2.cfg = { ...D2.cfg, model: b.dataset.v, color: vehCol(), u: t2 }; } else { L.set.car = +b.dataset.v; D2.cfg = { ...D2.cfg, model: vehId(), color: +b.dataset.v, u: t2 }; }
-    persist(); queueSync(); if (isShip()) shipHorn(0); else sfx.honk(); buzz(20);
+    U.act(D2, '🚗', `Picked ${veh().name}`); persist(); queueSync(); if (isShip()) shipHorn(0); else sfx.honk(); buzz(20);
     if (U.sheetOpen()) garageSheet(); else render();
   }
   else if (a === 'gnext') { const n = $('#g_name'); if (n && n.value.trim() !== D.cfg.name) D.cfg = { ...D.cfg, name: n.value.trim(), u: now() }; persist(); gs = Math.min(GSTEPS - 1, gs + 1); U.pushView(); sfx.tick(); render(); window.scrollTo(0, 0); }
@@ -666,7 +705,7 @@ document.addEventListener('click', async ev => {
   else if (a === 'prn') {
     const m = D.meds[b.dataset.id]; if (!m) return;
     if (!(await guardOK(D, m))) return;
-    const id = C.rid('r'), t = now(); D.prn[id] = { id: m.id, t, p: m.perDose, u: t }; sfx.take(); buzz(40); save();
+    await takeAsNeeded(m, null); sfx.take(); buzz(40); save();
   }
   else if (a === 'reconnect') { L.dev = null; L.moved = false; persist(); await sync(); render(); }
 });
@@ -674,13 +713,15 @@ document.addEventListener('change', ev => {
   if (U.uiChange(ev)) return;
   const k = ev.target.dataset && ev.target.dataset.s; if (!k) return;
   const v = ev.target.value, D = L.doc, t = now();
-  if (k.startsWith('lp:')) { const lp = { ...(D.cfg.libPrice || {}), [k.slice(3)]: Math.max(0, parseFloat(v) || 0) }; D.cfg = { ...D.cfg, libPrice: lp, u: t }; save(); return; }
+  if (k.startsWith('lp:')) { const lp = { ...(D.cfg.libPrice || {}), [k.slice(3)]: Math.max(0, parseFloat(v) || 0) }; D.cfg = { ...D.cfg, libPrice: lp, u: t }; quiet(); return; }
   if (k === 'name') D.cfg = { ...D.cfg, name: v.trim(), u: t };
   else if (k === 'cur') D.cfg = { ...D.cfg, cur: v.trim() || '₱', u: t };
   else if (k === 'pd1' || k === 'pd2') { const pd = [...D.cfg.paydays]; pd[k === 'pd1' ? 0 : 1] = Math.min(31, Math.max(1, parseInt(v) || 15)); D.cfg = { ...D.cfg, paydays: pd, u: t }; }
-  save();
+  if (k === 'name' || k === 'cur' || k === 'pd1' || k === 'pd2') quiet(); else save();
 });
 document.addEventListener('input', U.uiInput);
+let liveT = null;
+document.addEventListener('input', ev => { const el = ev.target; if (!el.dataset || !el.dataset.live) return; clearTimeout(liveT); liveT = setTimeout(() => { if (el.dataset.s === 'name') { L.doc.cfg = { ...L.doc.cfg, name: el.value.trim(), u: now() }; quiet(); } }, 500); });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && !L.dev && e.target.tagName === 'INPUT') { const b = $('[data-a="signin"]'); if (b) b.click(); } });
 U.onBack(() => { if (!L.set.guided) { if (gs > 0) { gs--; render(); } return; } if (tab === 'me') { tab = prevTab; render(); return; } if (sx) { sx = null; render(); } });
 window.addEventListener('resize', placeCar);
@@ -692,7 +733,8 @@ setInterval(() => {
   if ((tab === 'today' || d !== lastDay) && !U.sheetOpen() && !busy() && !typing) render();
   lastDay = d;
 }, 30000);
-setInterval(() => { if (!document.hidden) sync(); }, 5 * 6e4);
+setInterval(() => { if (!document.hidden) sync(); }, 15000);
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'sync') sync(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { checkPush(); sync(); if (!U.sheetOpen()) render(); } });
 
 /* ---------- service worker: offline + push + auto-update ---------- */

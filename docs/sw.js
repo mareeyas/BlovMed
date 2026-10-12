@@ -1,6 +1,6 @@
 // BlovMed service worker: offline cache, push, and quick updates.
 // Bump V whenever you change any app file.
-const V = 'blovmed-v6';
+const V = 'blovmed-v7';
 const FILES = ['./', 'index.html', 'admin.html', 'app.css', 'core.js', 'ui.js', 'cars.js', 'app.js', 'admin.js', 'config.js', 'manifest.json', 'icon-180.png', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(V).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
@@ -28,6 +28,7 @@ self.addEventListener('fetch', e => {
 });
 self.addEventListener('push', e => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch (_) {}
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cs => cs.forEach(c => c.postMessage({ type: 'sync' })))); // open pages refresh right away
   e.waitUntil(self.registration.showNotification(d.title || 'BlovMed', { body: d.body || 'Time for your meds', tag: d.tag, renotify: true, icon: 'icon-192.png', badge: 'icon-192.png', data: { url: d.url || './' }, vibrate: [200, 100, 200] }));
 });
 self.addEventListener('notificationclick', e => {

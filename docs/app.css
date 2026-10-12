@@ -162,3 +162,39 @@ main{position:relative}
 .scene.sea .car.idle svg{animation:bob 2.6s ease-in-out infinite}@keyframes bob{50%{transform:translateY(2px) rotate(-1.2deg)}}
 .scene.sea .smoke{background:radial-gradient(circle,#fff 0,#E8F6FF 55%,transparent 70%)}
 .scene.sea .skid{background:rgba(255,255,255,.85);bottom:12px;height:4px}
+/* ---------- v7: compact, full-width ---------- */
+main{max-width:720px;padding:10px 12px 92px}
+body.wide main{max-width:1180px}
+h1{font-size:21px;margin:4px 0 2px;padding-right:48px}h2{font-size:15px;margin:16px 0 6px;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+.card{padding:12px;border-radius:14px;margin-bottom:8px}
+.alert{padding:9px 12px;margin:6px 0;border-radius:12px}
+.avatar.top{right:12px;top:8px;width:36px;height:36px;font-size:15px}
+.scene{height:118px;margin:6px 0 4px;border-radius:16px}
+.status{margin:2px 0 8px;font-size:15px;text-align:center}
+.list{background:var(--card);border:2px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:8px}
+.lrow{display:flex;align-items:center;gap:8px;padding:0 10px 0 0;border-bottom:1px solid var(--line)}.lrow:last-child{border-bottom:0}
+.lbody{flex:1;display:flex;gap:10px;align-items:center;background:none;border:0;text-align:left;padding:10px 0 10px 12px;font:inherit;color:inherit;min-width:0}
+.lbody b{display:block;font-size:15px}.lbody span>span,.lbody>span:not(.t){color:var(--mute);font-size:13px}.lbody .t{min-width:62px;font-weight:700;font-size:14px;color:var(--ink)}
+.lbody>span:not(.t) b{color:var(--ink)}
+.mini-btn{border:0;border-radius:10px;background:var(--acc);color:var(--accink);font-weight:700;font-size:14px;padding:7px 14px;white-space:nowrap}
+.mini-btn.red{background:var(--bad);color:#fff}.mini-btn.ghost{background:transparent;color:var(--acc);border:2px solid var(--line)}
+.chk{width:32px;height:32px;border-radius:50%;border:0;background:var(--ok);color:#fff;font-weight:800}
+.dose2.taken{background:var(--okbg)}.dose2.taken b{color:var(--mute)!important}
+.dose2.overdue{background:var(--badbg)}.dose2.next:not(.overdue){box-shadow:inset 4px 0 0 var(--acc)}
+.dose2.next .mini-btn{animation:pulse 1.6s ease-in-out infinite}@keyframes pulse{50%{transform:scale(1.07)}}
+.post{position:absolute;bottom:22px;width:22px;margin-left:-11px;text-align:center;z-index:2;cursor:pointer}
+.scene.sea .post{bottom:16px}
+.post i{display:block;font-style:normal;font-size:17px;line-height:1}.post b{display:block;font-size:10px;font-weight:800;color:var(--ink);background:rgba(255,255,255,.85);border-radius:6px;padding:0 2px;margin-bottom:2px;white-space:nowrap;margin-left:-8px;margin-right:-8px}
+.post:after{content:"";display:block;width:2px;height:12px;background:rgba(0,0,0,.35);margin:0 auto}
+.post.next i{animation:pulse 1.4s ease-in-out infinite}.post.late b{background:var(--bad);color:#fff}.post.done b{background:var(--ok);color:#fff}
+.srow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:15px;min-height:46px}.srow:last-child{border-bottom:0}
+.srow input{padding:7px 10px}.srow .opt button{padding:5px 10px;font-size:13px}
+.toggle{width:46px;height:28px;border-radius:99px;border:0;background:var(--line);position:relative;flex:none}
+.toggle i{position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.toggle.on{background:var(--ok)}.toggle.on i{left:21px}
+.feed .day{font-size:13px;font-weight:800;color:var(--mute);margin:12px 0 4px}
+.feed .ev{display:flex;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line);font-size:14px}.feed .ev:last-child{border-bottom:0}
+.feed .ev i{font-style:normal;width:22px;text-align:center}.feed .ev span{flex:1}.feed .ev small{color:var(--mute);white-space:nowrap}
+.feed .ev.her{background:var(--bg)}
+.topbar{display:flex;justify-content:flex-end;gap:8px;align-items:center;font-size:13px;color:var(--mute);margin-bottom:2px}
+@media (min-width:900px){.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}}

@@ -47,12 +47,12 @@ export function sheetOpen() { return $('#sheet').classList.contains('open'); }
 
 /* ---------- common medicines (adult label guides) ---------- */
 export const LIB = {
-  para: { n: 'Paracetamol 500 mg', dose: 1, mp: 2, max: 8, gap: 4, days: 3, per: '1 to 2 tablets (500 to 1,000 mg) every 4 to 6 hours', lim: 'Never more than 8 tablets in 24 hours, with at least 4 hours between doses. Many cold and flu pills already contain paracetamol, so do not double up.', course: { type: 'hours', gap: 5, cnt: 4, first: '08:00' } },
-  ibu: { n: 'Ibuprofen 200 mg', dose: 1, mp: 2, max: 6, gap: 4, days: 3, per: '1 to 2 tablets (200 to 400 mg), up to 3 times a day, always with food', lim: 'Never more than 6 tablets (1,200 mg) in 24 hours. Not for stomach pain, ulcers, kidney problems, or if dengue is possible.', notes: 'Take with food', course: { type: 'hours', gap: 6, cnt: 3, first: '08:00' } },
+  para: { n: 'Paracetamol 500 mg', dose: 1, mp: 2, max: 8, gap: 4, every: 6, days: 3, per: '1 to 2 tablets (500 to 1,000 mg) every 4 to 6 hours', lim: 'Never more than 8 tablets in 24 hours, with at least 4 hours between doses. Many cold and flu pills already contain paracetamol, so do not double up.', course: { type: 'hours', gap: 5, cnt: 4, first: '08:00' } },
+  ibu: { n: 'Ibuprofen 200 mg', dose: 1, mp: 2, max: 6, gap: 4, every: 8, days: 3, per: '1 to 2 tablets (200 to 400 mg), up to 3 times a day, always with food', lim: 'Never more than 6 tablets (1,200 mg) in 24 hours. Not for stomach pain, ulcers, kidney problems, or if dengue is possible.', notes: 'Take with food', course: { type: 'hours', gap: 6, cnt: 3, first: '08:00' } },
   lop: { n: 'Loperamide 2 mg', dose: 1, mp: 2, max: 4, gap: 1, days: 2, per: 'Start with 2 capsules, then 1 after each loose stool', lim: 'Never more than 4 capsules (8 mg) a day without a doctor. See a doctor if it lasts over 2 days. Not for diarrhea with fever or blood.' },
-  cet: { n: 'Cetirizine 10 mg', dose: 1, mp: 1, max: 1, gap: 20, days: 7, per: '1 tablet once a day', lim: 'Only 1 tablet a day. It can make you sleepy, so many people take it at night.', course: { type: 'daily', times: ['20:00'] } },
+  cet: { n: 'Cetirizine 10 mg', dose: 1, mp: 1, max: 1, gap: 20, every: 24, days: 7, per: '1 tablet once a day', lim: 'Only 1 tablet a day. It can make you sleepy, so many people take it at night.', course: { type: 'daily', times: ['20:00'] } },
   ors: { n: 'Oral rehydration salts (ORS)', dose: 1, mp: null, max: null, gap: 0, days: 2, unit: 'sachet', per: 'Mix exactly as the packet says. Sip small amounts often.', lim: 'Use clean water and the amount on the packet.' },
-  anta: { n: 'Antacid tablets', dose: 1, mp: null, max: null, gap: 0, days: 2, per: 'Follow your product label, usually after meals and at bedtime.', lim: 'Ask the pharmacist how far apart to take it from your regular medicines.' },
+  anta: { n: 'Antacid tablets', dose: 1, mp: null, max: null, gap: 0, every: 0, days: 2, per: 'Follow your product label, usually after meals and at bedtime.', lim: 'Ask the pharmacist how far apart to take it from your regular medicines.' },
 };
 // buy: drinks and food to pick up when sick (what to eat and avoid stays as advice).
 export const SYM = {
@@ -126,7 +126,7 @@ export const lib = (doc, id) => ({ ...LIB[id], ...(((doc && doc.cfg.libOv) || {}
 export const libPills = id => { const L = LIB[id], c = L.course, per = c ? (c.type === 'hours' ? c.cnt : c.times.length) : 2; return L.dose * per * L.days; };
 export function fromLib(doc, id, mode) {
   const L = lib(doc, id), c = L.course, t = today().ymd;
-  const e = { id: C.rid('m'), name: L.n, perDose: L.dose, times: [], stock0: 0, stockAt: Date.now(), price: (doc.cfg.libPrice || {})[id] || 0, lib: id, maxDay: L.max, maxPer: L.mp, minGap: L.gap, start: t, dur: null, sched: { type: 'prn' }, prn: true, notes: L.how || L.notes || '', purpose: '', isNew: true };
+  const e = { id: C.rid('m'), name: L.n, perDose: L.dose, times: [], stock0: 0, stockAt: Date.now(), price: (doc.cfg.libPrice || {})[id] || 0, lib: id, maxDay: L.max, maxPer: L.mp, minGap: L.gap, start: t, dur: null, sched: { type: 'prn' }, prn: true, notes: L.how || L.notes || '', purpose: '', every: L.every || 0, followDays: L.days || 3, isNew: true };
   if (mode === 'course' && c) { e.prn = false; e.dur = L.days; if (c.type === 'hours') { e.sched = { type: 'hours', gap: c.gap, cnt: c.cnt, first: c.first }; e.times = C.hrs(c.first, c.gap, c.cnt); } else { e.sched = { type: 'daily' }; e.times = [...c.times]; } }
   return e;
 }
@@ -237,7 +237,8 @@ function drawEditor() {
   ${t === 'weekly' ? `<label>Which days?</label><div class="opt">${C.WD.map((d, i) => `<button class="${(s.days || []).includes(i) ? 'on' : ''}" data-a="wd" data-v="${i}">${d}</button>`).join('')}</div>` : ''}
   ${t === 'hours' ? `<div class="two"><div><label>Every how many hours?</label><input type="number" id="f_gap" min="1" max="12" value="${s.gap || 6}"></div><div><label>Doses a day</label><input type="number" id="f_cnt" min="1" max="6" value="${s.cnt || 3}"></div></div><label>First dose at</label><input type="time" id="f_first" value="${s.first || '08:00'}">` : ''}
   ${(t === 'daily' || t === 'everyN' || t === 'weekly') ? `<label>What time(s)?</label><div class="tc">${e.times.map((x, i) => `<span>${C.fmtT(x)}<button data-a="rmt" data-i="${i}" aria-label="Remove">×</button></span>`).join('')}</div><div class="add"><input type="time" id="f_t" value="20:00"><button class="btn ghost" data-a="addt">Add time</button></div>` : ''}
-  ${t === 'prn' ? '<p class="sub">It shows under "As needed" on Today. The app warns before too much is taken.</p>' : ''}
+  ${t === 'prn' ? `<p class="sub">It shows under "As needed" on Today. The app warns before too much is taken.</p>
+   <div class="two"><div><label>After I take it, remind me again every (hours)</label><input type="number" id="f_every" min="0" max="48" step="0.5" placeholder="don't remind" value="${e.every || ''}"></div><div><label>For up to (days)</label><input type="number" id="f_fdays" min="1" max="14" value="${e.followDays || 3}"></div></div>` : ''}
   <div class="two"><div><label>Start date</label><input type="date" id="f_start" value="${e.start}"></div><div><label>For how many days?</label><input type="number" id="f_dur" min="1" placeholder="ongoing" value="${e.dur || ''}"></div></div>
   <details ${(e.maxDay || e.minGap) ? 'open' : ''}><summary>Safety limits</summary><label>Most pills in 24 hours</label><input type="number" id="f_max" min="1" placeholder="no limit" value="${e.maxDay || ''}"><label>Wait at least (hours) between doses</label><input type="number" id="f_mg" min="0" step="0.5" placeholder="none" value="${e.minGap || ''}"></details>
   <div id="hint">${edHint()}</div>
@@ -266,6 +267,7 @@ function grab() {
   if (v('f_max') !== null) { e.maxDay = parseInt(v('f_max')) || null; e.minGap = parseFloat(v('f_mg')) || 0; }
   if (v('f_stock') !== null) e._stock = Math.max(0, parseInt(v('f_stock')) || 0);
   if (v('f_price') !== null) e.price = Math.max(0, parseFloat(v('f_price')) || 0);
+  if (v('f_every') !== null) { e.every = Math.max(0, parseFloat(v('f_every')) || 0); e.followDays = Math.min(14, Math.max(1, parseInt(v('f_fdays')) || 3)); }
 }
 function checkMed(e) {
   e.prn = e.sched.type === 'prn';
@@ -290,7 +292,7 @@ export function uiClick(a, b) {
       const m = doc.meds[B.med], cost = B.cost === '' ? n * (m.price || 0) : Math.max(0, parseFloat(B.cost) || 0), now = Date.now();
       const id = C.rid('b'); doc.buys[id] = { id, med: m.id, pills: n, cost, t: now, d: today().ymd, u: now };
       if (B.cost !== '' && cost > 0) doc.meds[m.id] = { ...m, price: Math.round(cost / n * 100) / 100, u: now };
-      closeSheet(); CX.save(); toast(`Added ${pl(n, 'pill')} of ${m.name} 👍`); return true;
+      act(doc, '🛒', `Bought ${pl(n, 'pill')} of ${m.name}${cost ? ' for ' + money(doc, cost) : ''}`); closeSheet(); CX.save(); toast(`Added ${pl(n, 'pill')} of ${m.name} 👍`); return true;
     }
   }
   if (sheetKind !== 'edit' || !E) return false;
@@ -310,9 +312,9 @@ export function uiClick(a, b) {
     if (!old) m.c = now;
     const cur = old ? C.stockOf(doc, old) : null;
     if (!old || E._stock !== cur) { m.stock0 = E._stock; m.stockAt = now; }
-    m.u = now; doc.meds[m.id] = m; closeSheet(); CX.save(); toast('Saved ✓'); return true;
+    m.u = now; doc.meds[m.id] = m; act(doc, '💊', `${old ? 'Edited' : 'Added'} ${m.name}`); closeSheet(); CX.save(); toast('Saved ✓'); return true;
   }
-  if (a === 'delm') { const id = E.id, nm = E.name; ask({ title: `Delete ${esc(nm)}?`, text: 'Its reminders will stop. Past doses stay in the history.', ok: 'Delete', danger: true, icon: '🗑️' }).then(y => { if (y) { doc.meds[id] = { ...doc.meds[id], del: true, u: Date.now() }; closeSheet(); CX.save(); } }); return true; }
+  if (a === 'delm') { const id = E.id, nm = E.name; ask({ title: `Delete ${esc(nm)}?`, text: 'Its reminders will stop. Past doses stay in the history.', ok: 'Delete', danger: true, icon: '🗑️' }).then(y => { if (y) { doc.meds[id] = { ...doc.meds[id], del: true, u: Date.now() }; act(doc, '🗑️', `Deleted ${nm}`); closeSheet(); CX.save(); } }); return true; }
   return false;
 }
 function readBuy() { const p = $('#b_pills'), c = $('#b_cost'); if (p) B.pills = p.value; if (c) B.cost = c.value; }
@@ -336,6 +338,7 @@ export function uiInput(ev) { if (ev.target.closest('#sheet') && (sheetKind === 
    v6 shared screens: profile, sick logbook, buy list
    ====================================================================== */
 let ROLE = 'phone';
+export function act(doc, ic, text) { const t = Date.now(), id = C.rid('a'); doc.act[id] = { id, t, ic, text, by: ROLE, u: t }; }
 export function setCtx(cx, role) { CX = cx; ROLE = role; }
 const nowMs = () => Date.now();
 const tel = p => p ? `<a href="tel:${esc(String(p).replace(/[^\d+]/g, ''))}" style="color:var(--acc);font-weight:700">${esc(p)}</a>` : '';
@@ -372,7 +375,7 @@ export function openProfileEdit() {
   sheetKind = 'prof';
   openSheet(`<h1 style="margin-top:0">✏️ ${ROLE === 'admin' ? 'His' : 'My'} profile</h1><p class="sub">Fill in what you know. Skip anything you like.</p>
    ${PF.map(([title, fields]) => `<details class="sec card" ${title === 'Me' ? 'open' : ''}><summary><b>${title}</b></summary><div>${fields.map(field).join('')}</div></details>`).join('')}
-   <button class="btn full big" data-a="profsave">Save</button>`);
+   <p class="mini" id="pf_state" style="text-align:center">Changes save automatically as you type.</p><button class="btn full big" data-a="profsave">Done</button>`);
 }
 
 /* ---------- sick logbook ---------- */
@@ -429,7 +432,7 @@ export async function v6Click(a, b) {
   if (a === 'profsave') {
     const p = { ...(doc.prof || {}) };
     for (const [, fields] of PF) for (const [k] of fields) { const el = $('#pf_' + k); if (el) p[k] = el.value.trim(); }
-    p.u = t; p.by = ROLE; doc.prof = p; closeSheet(); CX.save(); toast('Profile saved ✓'); return true;
+    p.u = t; p.by = ROLE; doc.prof = p; act(doc, '👤', 'Updated the profile'); closeSheet(); CX.save(); toast('Profile saved ✓'); return true;
   }
   if (a === 'sickopen') { openSick(b.dataset.id); return true; }
   if (a === 'sickup') {
@@ -437,8 +440,8 @@ export async function v6Click(a, b) {
     const note = ($('#sk_note') && $('#sk_note').value.trim()) || '', st = b.dataset.st;
     if (st === 'note' && !note) { say('Type a note first', '', '📝'); return true; }
     const ns = { ...s, ups: [...(s.ups || []), { t, st, note, by: ROLE }], u: t };
-    if (st === 'gone') { ns.open = false; ns.end = t; }
-    doc.sick[s.id] = ns; closeSheet(); CX.save();
+    if (st === 'gone') { ns.open = false; ns.end = t; for (const m of C.medList(doc)) if (m.follow && m.follow.on && m.follow.sick === s.id) doc.meds[m.id] = { ...m, follow: { ...m.follow, on: false }, u: t }; }
+    doc.sick[s.id] = ns; act(doc, symOf(s).e, `${s.name || symOf(s).n}: ${st === 'note' ? 'note: ' + note : ST[st][1].toLowerCase()}`); closeSheet(); CX.save();
     toast(st === 'gone' ? 'So glad you feel better 💖' : st === 'worse' ? 'Logged. Please take care 💖' : st === 'note' ? 'Note sent 💌' : 'Logged ✓');
     if (st === 'worse' && ROLE === 'phone') say('Feeling worse?', `Check the "See a doctor if" list for ${esc(symOf(s).n.toLowerCase())}. If any of those apply, see a doctor. ${doc.prof && doc.prof.emphone ? 'Your emergency contact: ' + tel(doc.prof.emphone) : ''}`, '🚑');
     return true;
@@ -447,10 +450,22 @@ export async function v6Click(a, b) {
   if (a === 'kind') { KINDSEL = b.dataset.k; const v = $('#newitem') ? $('#newitem').value : ''; (CX.render || CX.save)(); const n = $('#newitem'); if (n) { n.value = v; n.focus(); } return true; }
   if (a === 'additem') {
     const v = ($('#newitem').value || '').trim(); if (!v) return true;
-    const id = C.rid('s'); doc.shop[id] = { id, text: v, kind: KINDSEL, why: '', add: t, done: 0, by: ROLE, u: t }; CX.save(); toast('Added 🛒');
+    const id = C.rid('s'); doc.shop[id] = { id, text: v, kind: KINDSEL, why: '', add: t, done: 0, by: ROLE, u: t }; act(doc, '🛒', `Added "${v}" to the buy list`); CX.save(); toast('Added 🛒');
     const n = $('#newitem'); if (n) n.focus(); return true;
   }
-  if (a === 'shop') { const s = doc.shop[b.dataset.id]; if (s) { doc.shop[s.id] = { ...s, done: s.done ? 0 : t, u: t }; CX.save(); if (!s.done) toast('Got it ✓'); } return true; }
+  if (a === 'shop') { const s = doc.shop[b.dataset.id]; if (s) { doc.shop[s.id] = { ...s, done: s.done ? 0 : t, u: t }; act(doc, s.done ? '↩️' : '✅', `${s.done ? 'Unticked' : 'Bought'} "${s.text}"`); CX.save(); if (!s.done) toast('Got it ✓'); } return true; }
   if (a === 'delshop') { const s = doc.shop[b.dataset.id]; if (s) { doc.shop[s.id] = { ...s, del: true, u: t }; CX.save(); } return true; }
   return false;
 }
+
+// profile fields save as he types
+let pfT = null;
+document.addEventListener('input', e => {
+  if (!e.target.id || !e.target.id.startsWith('pf_') || !CX) return;
+  clearTimeout(pfT); const st = $('#pf_state'); if (st) st.textContent = 'Saving…';
+  pfT = setTimeout(() => {
+    const doc = CX.doc(), p = { ...(doc.prof || {}) };
+    for (const [, fields] of PF) for (const [k] of fields) { const el = $('#pf_' + k); if (el) p[k] = el.value.trim(); }
+    p.u = Date.now(); p.by = ROLE; doc.prof = p; (CX.quiet || CX.save)(); const s2 = $('#pf_state'); if (s2) s2.textContent = 'Saved ✓';
+  }, 700);
+});

@@ -11,10 +11,11 @@ if (A && A.doc) A.doc = C.merge(A.doc, null);
 const persist = () => { try { localStorage.setItem(AK, JSON.stringify(A)); } catch (e) {} };
 const doc = () => A.doc;
 const save = () => { persist(); render(); queueSync(); };
-const CX = { doc, save, render: () => render() };
+const quiet = () => { persist(); queueSync(300); };
+const CX = { doc, save, quiet, render: () => render() };
 U.setCtx(CX, 'admin');
 const now = () => Date.now();
-let tab = 'home', pushOn = false, healthSeg = 'log', loginMode = 'in';
+let tab = 'home', pushOn = false, healthSeg = 'log', loginMode = 'in', feedWho = 'all';
 const appLink = () => location.href.replace(/admin\.html.*$/, '').replace(/[#?].*$/, '');
 
 /* ---------- sync ---------- */
@@ -99,7 +100,8 @@ function viewHome() {
   const D = A.doc, n = today(), ds = C.dosesOn(D, n.ymd), st = C.stats(D, n.ymd), wk = C.week(D, n.ymd), p = C.plan(D, n.ymd), who = D.cfg.name || 'Him', m = A.meta || {};
   const s = d => d.at ? `<span class="pill ok">✓ ${U.tm(d.at)}</span>` : (n.min - C.mins(d.t) >= 30 ? '<span class="pill bad">Not logged</span>' : n.min >= C.mins(d.t) ? '<span class="pill warn">Due now</span>' : '<span class="pill">Later</span>');
   return `<h1>${esc(who)}'s meds</h1><p class="sub">${m.seen && m.seen.phone ? 'His app synced ' + U.ago(m.seen.phone) : m.phone ? 'Waiting for his app to sync' : 'Not signed in on his phone yet'} · <a href="#" data-a="refresh" style="color:var(--acc)">refresh</a></p>
-  ${startCard()}<h2>Needs attention</h2>${alertsHtml(D, n)}
+  ${startCard()}<div class="cols"><div><h2>Needs attention</h2>${alertsHtml(D, n)}
+  <h2>Latest activity</h2><div class="feed"><div class="list">${Object.values(D.act || {}).sort((a, b) => b.t - a.t).slice(0, 5).map(x => `<div class="ev ${x.by === 'admin' ? 'her' : ''}"><i>${x.ic || '•'}</i><span>${esc(x.text)}</span><small>${U.ago(x.t)}</small></div>`).join('') || '<div class="ev"><span class="mini">Nothing yet.</span></div>'}</div></div><button class="link" data-a="tab" data-k="act">See all activity</button></div><div>
   <h2>Today · ${ds.filter(d => d.at).length} of ${ds.length} taken</h2>
   <div class="card">${ds.map(d => `<button class="check" data-a="dd" data-k="${d.key}"><span class="tx"><b>${C.fmtT(d.t)}</b> · ${esc(d.m.name)} ×${d.m.perDose}${d.at ? `<small>${delay(d)}</small>` : ''}</span>${s(d)}</button>`).join('') || '<p class="mini">No scheduled doses today.</p>'}</div>
   <h2>Last 7 days</h2><div class="card"><div class="bars">${wk.map(w => { const pc = w.total ? w.done / w.total : 0; return `<div><b class="${!w.total ? 'none' : pc === 1 ? 'full' : ''}" style="height:${w.total ? Math.max(4, pc * 100) : 4}%"></b>${C.WD[C.wday(w.d)]}</div>`; }).join('')}</div>
@@ -107,10 +109,24 @@ function viewHome() {
    <div class="row mini"><span>Taken this week</span><span>${pct(wk)}</span></div></div>
   <h2>Money</h2><button class="card" style="width:100%;text-align:left;font:inherit;color:inherit" data-a="tab" data-k="money">
    ${p.nowTotal ? `<div class="row"><span>Buy before payday</span><b style="color:var(--bad)">${U.money(D, p.nowTotal)}</b></div>` : ''}
-   <div class="row"><span>Set aside on ${C.fmtD(p.p1)}</span><b>${U.money(D, p.payTotal)}</b></div><div class="row mini"><span>Spent since ${C.fmtD(p.since)}</span><span>${U.money(D, p.spent)}</span></div></button>`;
+   <div class="row"><span>Set aside on ${C.fmtD(p.p1)}</span><b>${U.money(D, p.payTotal)}</b></div><div class="row mini"><span>Spent since ${C.fmtD(p.since)}</span><span>${U.money(D, p.spent)}</span></div></button></div></div>`;
 }
 const pct = wk => { const t = wk.reduce((x, w) => x + w.total, 0), d = wk.reduce((x, w) => x + w.done, 0); return t ? Math.round(d / t * 100) + '% (' + d + ' of ' + t + ')' : '—'; };
 function delay(d) { const dt = new Date(d.at), m = dt.getHours() * 60 + dt.getMinutes() - C.mins(d.t); return Math.abs(m) < 5 ? 'On time' : m > 0 ? `${m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + ' min'} late` : `${-m} min early`; }
+function viewActivity() {
+  const D = A.doc, who = D.cfg.name || 'He', me = D.cfg.helper || 'You';
+  const evs = Object.values(D.act || {}).filter(x => feedWho === 'all' || (feedWho === 'his' ? x.by === 'phone' : x.by === 'admin')).sort((a, b) => b.t - a.t).slice(0, 300);
+  let day = '', out = '';
+  for (const x of evs) {
+    const d = C.localNow(undefined, x.t).ymd, lab = d === today().ymd ? 'Today' : d === C.addD(today().ymd, -1) ? 'Yesterday' : C.fmtD(d);
+    if (d !== day) { if (day) out += '</div>'; out += `<div class="day">${lab}</div><div class="list">`; day = d; }
+    out += `<div class="ev ${x.by === 'admin' ? 'her' : ''}"><i>${x.ic || '•'}</i><span><b>${esc(x.by === 'admin' ? me : who)}</b> ${esc(x.text)}</span><small>${U.tm(x.t)}</small></div>`;
+  }
+  if (day) out += '</div>';
+  return `<h1>Activity</h1><p class="sub">Everything that happens in his app, live.</p>
+   <div class="seg">${[['all', 'All'], ['his', esc(who)], ['mine', 'Me']].map(([k, l]) => `<button class="${feedWho === k ? 'on' : ''}" data-a="feedwho" data-k="${k}">${l}</button>`).join('')}</div>
+   <div class="feed">${out || '<p class="mini">Nothing yet. His activity shows up here as it happens.</p>'}</div>`;
+}
 function viewMeds() {
   const D = A.doc, ms = C.medList(D);
   return `<h1>Medicines</h1><p class="sub">Changes reach his devices the next time they sync.</p>
@@ -142,7 +158,11 @@ function viewSettings() {
    <label>💌 Welcome message for him</label><textarea data-s="gift" rows="3" placeholder="Shown on the first screen of his welcome guide">${esc(c.gift || '')}</textarea></div>
   <div class="card"><b>🔔 My alerts (this device)</b><p class="mini">Missed doses, low stock, sick logs and updates, profile changes and things he adds to his buy list.</p>
    ${pushOn && m.subs && m.subs.admin ? '<span class="pill ok">Alerts are on</span>' : '<button class="btn full" data-a="perm">Turn on alerts for me</button>'}
-   <label>Tell me when a dose is not logged after</label>${opt('miss', [0, 30, 60, 120], ['Never', '30 min', '1 hour', '2 hours'])}</div>
+   <label>Tell me when a dose is not logged after</label>${opt('miss', [0, 30, 60, 120], ['Never', '30 min', '1 hour', '2 hours'])}
+   <div class="srow" style="padding:10px 0 0"><span>Tell me each time he takes a dose</span><button class="toggle ${c.tellTake !== false ? 'on' : ''}" data-a="telltake"><i></i></button></div></div>
+  <div class="card" style="border-color:var(--bad)"><b>🧹 Reset his app</b><p class="mini" style="margin:6px 0 10px">Clears your test data on every device he's signed in on. He'll see the welcome guide again.</p>
+   <button class="btn ghost full" data-a="wipe" data-k="soft">Clear test activity (keep medicines and profile)</button>
+   <button class="btn red full" style="margin-top:8px" data-a="wipe" data-k="all">Erase everything and start over</button></div>
   <details class="sec card"><summary><b>⏰ His reminders</b></summary><div><div class="row"><span>Nudge again at +10 and +25 min</span><div class="opt"><button class="${c.nags ? 'on' : ''}" data-a="ctog" data-k="nags">${c.nags ? 'On' : 'Off'}</button></div></div>
    <label>Low-stock warning when pills last</label>${opt('lowDays', [3, 4, 5, 7], ['3 days', '4 days', '5 days', '7 days'])}
    <div class="two"><div>${num('alertHour', 'Daily buy/payday alert (hour, 0-23)', 0, 23)}</div><div>${num('shopHour', 'Buy list reminder (hour)', 0, 23)}</div></div></div></details>
@@ -173,8 +193,10 @@ function sendLoginSheet(pin) {
 function render() {
   document.body.classList.add('wide');
   if (!A) { $('#app').innerHTML = viewLogin(); $('#nav').innerHTML = ''; return; }
-  $('#app').innerHTML = tab === 'home' ? viewHome() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(A.doc, true) : tab === 'health' ? viewHealth() : tab === 'buy' ? U.buyHtml(A.doc, true) : viewSettings();
-  $('#nav').innerHTML = [['home', '📋', 'Overview'], ['meds', '💊', 'Meds'], ['health', '🩺', 'Health'], ['buy', '🛒', 'Buy'], ['money', '💰', 'Money'], ['set', '⚙️', 'Settings']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
+  const nm = ((A.meta || {}).adminNames || [])[0];
+  $('#app').innerHTML = `<div class="topbar">${nm ? '@' + esc(nm) + ' · ' : ''}<span>${A.synced ? 'live · ' + U.ago(A.synced) : ''}</span><button class="mini-btn ghost" data-a="logout">Sign out</button></div>`
+    + (tab === 'home' ? viewHome() : tab === 'act' ? viewActivity() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(A.doc, true) : tab === 'health' ? viewHealth() : tab === 'buy' ? U.buyHtml(A.doc, true) : viewSettings());
+  $('#nav').innerHTML = [['home', '📋', 'Overview'], ['act', '📜', 'Activity'], ['meds', '💊', 'Meds'], ['health', '🩺', 'Health'], ['buy', '🛒', 'Buy'], ['set', '⚙️', 'Settings']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
 }
 
 /* ---------- events ---------- */
@@ -199,7 +221,7 @@ document.addEventListener('click', async ev => {
   else if (a === 'health') { tab = 'health'; healthSeg = b.dataset.k; render(); }
   else if (a === 'refresh') sync();
   else if (a === 'dd') doseSheet(b.dataset.k);
-  else if (a === 'mark' || a === 'unmark') { const k = b.dataset.k, m = D.meds[k.split('|')[1]]; if (a === 'mark' && !(await ask({ icon: '✅', title: 'Mark as taken?', text: 'His devices will stop reminding him about this dose.', ok: 'Mark taken' }))) return; D.log[k] = { t: a === 'mark' ? t : 0, p: m ? m.perDose : 1, u: t, by: 'helper' }; U.closeSheet(); save(); }
+  else if (a === 'mark' || a === 'unmark') { const k = b.dataset.k, m = D.meds[k.split('|')[1]]; U.act(D, a === 'mark' ? '✅' : '↩️', `${a === 'mark' ? 'Marked' : 'Unmarked'} ${m ? m.name : 'a dose'} for him`); if (a === 'mark' && !(await ask({ icon: '✅', title: 'Mark as taken?', text: 'His devices will stop reminding him about this dose.', ok: 'Mark taken' }))) return; D.log[k] = { t: a === 'mark' ? t : 0, p: m ? m.perDose : 1, u: t, by: 'helper' }; U.closeSheet(); save(); }
   else if (a === 'new') U.openEditor(CX);
   else if (a === 'edit') U.openEditor(CX, b.dataset.id);
   else if (a === 'buy') U.openBuy(CX, b.dataset.id);
@@ -208,6 +230,17 @@ document.addEventListener('click', async ev => {
   else if (a === 'ctog') { D.cfg = { ...D.cfg, [b.dataset.k]: !D.cfg[b.dataset.k], u: t }; save(); }
   else if (a === 'copt') { D.cfg = { ...D.cfg, [b.dataset.k]: JSON.parse(b.dataset.v), u: t }; save(); }
   else if (a === 'perm') enablePush();
+  else if (a === 'feedwho') { feedWho = b.dataset.k; render(); }
+  else if (a === 'telltake') { D.cfg = { ...D.cfg, tellTake: D.cfg.tellTake === false, u: t }; save(); }
+  else if (a === 'wipe') {
+    const all = b.dataset.k === 'all';
+    if (!(await ask({ icon: all ? '🧨' : '🧹', title: all ? 'Erase everything?' : 'Clear test activity?', text: all ? 'Removes his medicines, history, profile, logbook and buy list on all his devices. His sign-in stays.' : 'Removes doses taken, stars, streak, sick logs, buy list, purchases and activity. Medicines, profile and settings stay.', ok: all ? 'Erase everything' : 'Clear it', danger: true }))) return;
+    const n2 = C.newDoc(); n2.gen = (D.gen || 0) + 1;
+    const keep = all ? { name: D.cfg.name, helper: D.cfg.helper, gift: D.cfg.gift, paydays: D.cfg.paydays, cur: D.cfg.cur } : { ...D.cfg, ptsBase: 0, resetAt: 0, resetDay: '', symMeds: {} };
+    n2.cfg = { ...n2.cfg, ...keep, u: t };
+    if (!all) { for (const m of C.medList(D)) n2.meds[m.id] = { ...m, follow: undefined, stockAt: t, u: t }; n2.prof = { ...D.prof }; }
+    A.doc = n2; U.setCtx(CX, 'admin'); U.act(A.doc, '🧹', all ? 'Erased his app and started over' : 'Cleared test activity'); save(); toast(all ? 'Erased. His app starts fresh ✨' : 'Cleared ✨');
+  }
   else if (a === 'reset') { if (await ask({ icon: '🔄', title: 'Reset stars and streak?', text: 'His stars, level and streak go back to 0. Medicines and dose history stay.', ok: 'Reset', danger: true })) { D.cfg = { ...D.cfg, ptsBase: 0, resetAt: t, resetDay: today().ymd, u: t }; save(); toast('Reset to 0 ✓'); } }
   else if (a === 'setlogin') {
     const user = ($('#hl_user').value || '').trim().toLowerCase(), pin = ($('#hl_pin').value || '').trim();
@@ -232,11 +265,14 @@ document.addEventListener('change', ev => {
   else if (k === 'cur') c.cur = v.trim() || '₱';
   else if (k === 'pd1' || k === 'pd2') { const pd = [...c.paydays]; pd[k === 'pd1' ? 0 : 1] = Math.min(31, Math.max(1, parseInt(v) || 15)); c.paydays = pd; }
   else if (k === 'alertHour' || k === 'shopHour') c[k] = Math.min(23, Math.max(0, parseInt(v) || 0));
-  c.u = t; D.cfg = c; save();
+  c.u = t; D.cfg = c; if (['name', 'helper', 'gift'].includes(k)) quiet(); else save();
 });
 document.addEventListener('input', U.uiInput);
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && !A && e.target.tagName === 'INPUT') { const b = $('[data-a="adlogin"],[data-a="signup"]'); if (b) b.click(); } });
-setInterval(() => { if (!document.hidden && A) sync(); }, 60000);
+setInterval(() => { if (!document.hidden && A) sync(); }, 8000);
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'sync' && A) sync(); });
+const liveT = {};
+document.addEventListener('input', ev => { const k = ev.target.dataset && ev.target.dataset.s; if (!A || !['name', 'helper', 'gift'].includes(k)) return; clearTimeout(liveT[k]); liveT[k] = setTimeout(() => { A.doc.cfg = { ...A.doc.cfg, [k]: ev.target.value.trim(), u: now() }; quiet(); }, 600); });
 setInterval(() => { if (A && !U.sheetOpen() && !typing()) render(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && A) sync(); });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
