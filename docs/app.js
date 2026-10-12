@@ -61,12 +61,13 @@ async function sync() {
     if (r.status === 401) { signedOut('You were signed out on this device.'); return; }
     if (!r.ok) return;
     const j = await r.json();
-    const wasGen = L.doc.gen || 0;
+    const wasGen = L.doc.gen || 0, before = JSON.stringify(L.doc) + JSON.stringify(L.meta || {});
     L.doc = C.merge(L.doc, j.doc); L.meta = j.meta; L.synced = Date.now();
+    const changed = before !== JSON.stringify(L.doc) + JSON.stringify(L.meta || {});
     if ((L.doc.gen || 0) > wasGen) { L.set.guided = false; gs = 0; tab = 'today'; U.closeSheet(); if (document.activeElement) document.activeElement.blur(); persist(); render(); setTimeout(() => toast('Your app was refreshed by ' + (L.doc.cfg.helper || 'your helper') + ' ✨'), 300); }
     persist();
     if (j.resub) await resubscribe();
-    if (!U.sheetOpen() && !busy() && !typing()) render();
+    if (changed && !U.sheetOpen() && !busy() && !typing()) render();
   } catch (e) {} finally { syncing = false; if (again) { again = false; queueSync(300); } }
 }
 async function api(path, body) {
@@ -109,7 +110,7 @@ function pinSheet() {
    <label>Current PIN</label><input type="password" id="pn_old" class="pinput" inputmode="numeric" maxlength="6">
    <label>New PIN</label><input type="password" id="pn_new" class="pinput" inputmode="numeric" maxlength="6">
    <label>New PIN again</label><input type="password" id="pn_new2" class="pinput" inputmode="numeric" maxlength="6">
-   <button class="btn full big" style="margin-top:14px" data-a="pinsave">Save new PIN</button>`);
+   <div class="sbar"><button class="btn ghost" data-a="close">Cancel</button><button class="btn" data-a="pinsave">Save new PIN</button></div>`);
 }
 
 /* ---------- push reminders, with a health check every time the app opens ---------- */
@@ -184,52 +185,63 @@ function sceneHtml(all) {
   return `<div class="scene ${ship ? 'sea' : ''}" data-a="car" aria-label="Tap to honk">${ship ? '<div class="water"></div>' : '<div class="road"></div>'}<div class="lines"></div><span class="speedo" style="opacity:0"></span>${posts || `<div class="flag">${ship ? '🏝️' : '🏁'}</div>`}<div class="car idle">${carSVG()}</div></div>`;
 }
 function placeCar() {
-  const c = $('.car'); if (!c) return;
-  const posts = document.querySelectorAll('.post'), N = posts.length;
-  posts.forEach(p => { p.style.left = (carX((+p.dataset.i + 1) / N) + c.offsetWidth - 10) + 'px'; });
-  if (!busy()) c.style.transform = `translateX(${carX(prog())}px)`;
+  const c = $('.car'), sc = $('.scene'); if (!c || !sc) return;
+  const n = today(), ds = todayDoses(n), xs = postXs(sc, c.offsetWidth, ds, n), posts = document.querySelectorAll('.post');
+  const tight = xs.some((x, i) => i && x - xs[i - 1] < 54);
+  posts.forEach(p => { const i = +p.dataset.i; p.style.left = xs[i] + 'px'; p.classList.toggle('alt', tight && i % 2 === 1); });
+  const k = reached();
+  if (!busy()) c.style.transform = `translateX(${k ? xs[k - 1] - c.offsetWidth + 2 : 8}px)`;
 }
 function carPos() { const sc = $('.scene'), c = $('.car'); return c.getBoundingClientRect().left - sc.getBoundingClientRect().left; }
 function puff(x) { const sc = $('.scene'); if (!sc) return; const d = document.createElement('div'); d.className = 'smoke'; d.style.left = (x - 6 + Math.random() * 10) + 'px'; d.style.bottom = (18 + Math.random() * 8) + 'px'; sc.appendChild(d); setTimeout(() => d.remove(), 950); }
 function speedo(peak, ms) { const el = $('.speedo'); if (!el) return; const t0 = performance.now(); const f = now => { const k = Math.min(1, (now - t0) / ms), v = Math.round(peak * Math.sin(Math.PI * k)); el.textContent = v + (isShip() ? ' knots' : ' km/h'); el.style.opacity = k < 1 ? 1 : 0; if (k < 1) requestAnimationFrame(f); }; requestAnimationFrame(f); }
-function drive(p0, p1, win) {
+function drive(k0, k1, win) {
   const sc = $('.scene'), car = $('.car'); if (!sc || !car) return;
-  const x0 = carX(p0), x1 = carX(p1), over = Math.max(10, Math.min(46, sc.clientWidth - 100 - x1)), dur = reduce ? 400 : 1600;
-  animUntil = Date.now() + dur + (win ? 1500 : 200);
-  car.classList.remove('idle'); sc.classList.add('fast'); speedo(isShip() ? (win ? 34 : 27) : (win ? 180 : 120), dur);
-  const ship = isShip();
-  const a = car.animate(ship ? [
-    { transform: `translateX(${x0}px) rotate(0deg)`, offset: 0 },
-    { transform: `translateX(${x0 - 4}px) rotate(-3deg)`, offset: .15 },
-    { transform: `translateX(${x1 + over}px) rotate(-1deg) translateY(-2px)`, offset: .55 },
-    { transform: `translateX(${x1 + over * .5}px) rotate(4deg)`, offset: .75 },
-    { transform: `translateX(${x1}px) rotate(0deg)`, offset: 1 }] : [
-    { transform: `translateX(${x0}px) rotate(0deg)`, offset: 0 },
-    { transform: `translateX(${x0 - 8}px) rotate(-5deg)`, offset: .12 },                 // launch: nose lifts
-    { transform: `translateX(${x1 + over}px) rotate(-2deg)`, offset: .5 },               // full speed
-    { transform: `translateX(${x1 + over * .55}px) rotate(14deg)`, offset: .66 },        // drift: tail kicks out
-    { transform: `translateX(${x1 - 6}px) rotate(-7deg)`, offset: .83 },                 // counter-steer
-    { transform: `translateX(${x1}px) rotate(0deg)`, offset: 1 }], { duration: dur, easing: 'cubic-bezier(.25,.7,.25,1)' });
-  car.style.transform = `translateX(${x1}px)`;
-  if (!reduce) {
-    const sk = document.createElement('div'); sk.className = 'skid'; sk.style.left = (x1 - 10) + 'px'; sk.style.width = (over + 70) + 'px'; sc.appendChild(sk); setTimeout(() => sk.remove(), 1900);
-    for (let i = 0; i < 12; i++) setTimeout(() => { if ($('.car')) puff(carPos() + (i % 2 ? 4 : 70)); }, 650 + i * 70);
+  const ds = todayDoses(today()), xs = postXs(sc, car.offsetWidth, ds, today()), cw = car.offsetWidth;
+  const at = k => k <= 0 ? 8 : xs[k - 1] - cw + 2, ship = isShip();
+  const S = Math.max(1, k1 - k0), seg = reduce ? 250 : (ship ? 1100 : 900), dur = S * seg;
+  animUntil = Date.now() + dur + (win ? 1600 : 250);
+  car.classList.remove('idle'); sc.classList.add('fast'); speedo(ship ? (win ? 34 : 27) : (win ? 180 : 120), dur);
+  // one hop per flag, in order: the car always reaches the first flag before the next
+  const frames = [{ transform: `translateX(${at(k0)}px) rotate(0deg)`, offset: 0 }];
+  for (let i = 0; i < S; i++) {
+    const a = at(k0 + i), b = at(k0 + i + 1), o = i / S, w = 1 / S;
+    frames.push({ transform: `translateX(${a + (b - a) * .55}px) rotate(${ship ? -2 : -4}deg)`, offset: o + w * .4 });
+    frames.push({ transform: `translateX(${b + (ship ? 4 : 8)}px) rotate(${ship ? 3 : 11}deg)`, offset: o + w * .78 });
+    frames.push({ transform: `translateX(${b}px) rotate(0deg)`, offset: o + w });
   }
-  if (ship) { shipHorn(0); splash(.2); } else { vroom(); screech(.95); }
-  a.onfinish = () => {
+  const x1 = at(k1);
+  const an = car.animate(frames, { duration: dur, easing: 'ease-in-out' });
+  car.style.transform = `translateX(${x1}px)`;
+  if (!reduce) for (let i = 0; i < S; i++) {
+    const b = at(k0 + i + 1), t0 = (i + .7) * seg;
+    setTimeout(() => { const sk = document.createElement('div'); sk.className = 'skid'; sk.style.left = (b - 6) + 'px'; sk.style.width = (cw * .7) + 'px'; sc.appendChild(sk); setTimeout(() => sk.remove(), 1900); for (let j = 0; j < 6; j++) setTimeout(() => puff(b + (j % 2 ? 2 : cw * .6)), j * 60); }, t0);
+    setTimeout(() => { if (ship) splash(0); else screech(0); }, t0);
+  }
+  if (ship) shipHorn(0); else vroom();
+  an.onfinish = () => {
     sc.classList.remove('fast'); if (!win) { car.classList.add('idle'); return; }
-    if (ship) {
-      shipHorn(0); shipHorn(.9);
-      car.animate([{ transform: `translateX(${x1}px)` }, { transform: `translateX(${x1}px) translateY(-6px) rotate(-3deg)` }, { transform: `translateX(${x1}px) translateY(2px) rotate(2deg)` }, { transform: `translateX(${x1}px)` }], { duration: 1300 }).onfinish = () => car.classList.add('idle');
-      for (let i = 0; i < 12; i++) { const b = document.createElement('div'); b.className = 'boom'; b.textContent = ['🎆', '✨', '🏆', '💖'][i % 4]; b.style.left = (x1 + 50) + 'px'; b.style.bottom = '50px'; b.style.setProperty('--dx', (Math.random() * 180 - 90) + 'px'); b.style.setProperty('--dy', (-30 - Math.random() * 60) + 'px'); b.style.setProperty('--r', '0deg'); sc.appendChild(b); setTimeout(() => b.remove(), 1150); }
-      return;
-    }
-    const d = car.animate([{ transform: `translateX(${x1}px) rotate(0deg)` }, { transform: `translateX(${x1}px) rotate(720deg)` }], { duration: reduce ? 300 : 1300, easing: 'cubic-bezier(.4,0,.2,1)' });
-    screech(0); for (let i = 0; i < 14; i++) setTimeout(() => puff(x1 + 20 + Math.random() * 60), i * 80);
-    for (let i = 0; i < 10; i++) { const b = document.createElement('div'); b.className = 'boom'; b.textContent = ['🎉', '✨', '🏆', '💖'][i % 4]; b.style.left = (x1 + 40) + 'px'; b.style.bottom = '50px'; b.style.setProperty('--dx', (Math.random() * 160 - 80) + 'px'); b.style.setProperty('--dy', (-30 - Math.random() * 60) + 'px'); b.style.setProperty('--r', (Math.random() * 90 - 45) + 'deg'); sc.appendChild(b); setTimeout(() => b.remove(), 1150); }
-    d.onfinish = () => car.classList.add('idle');
+    if (ship) { shipHorn(0); shipHorn(.9); car.animate([{ transform: `translateX(${x1}px)` }, { transform: `translateX(${x1}px) translateY(-6px) rotate(-3deg)` }, { transform: `translateX(${x1}px) translateY(2px) rotate(2deg)` }, { transform: `translateX(${x1}px)` }], { duration: 1300 }).onfinish = () => car.classList.add('idle'); }
+    else { screech(0); car.animate([{ transform: `translateX(${x1}px) rotate(0deg)` }, { transform: `translateX(${x1}px) rotate(720deg)` }], { duration: reduce ? 300 : 1300, easing: 'cubic-bezier(.4,0,.2,1)' }).onfinish = () => car.classList.add('idle'); for (let i = 0; i < 12; i++) setTimeout(() => puff(x1 + 10 + Math.random() * 60), i * 80); }
+    confetti(sc, x1 + cw / 2);
   };
 }
+function confetti(sc, x) {
+  for (let i = 0; i < 12; i++) { const b = document.createElement('div'); b.className = 'boom'; b.textContent = ['🎉', '✨', '🏆', '💖'][i % 4]; b.style.left = x + 'px'; b.style.bottom = '50px'; b.style.setProperty('--dx', (Math.random() * 180 - 90) + 'px'); b.style.setProperty('--dy', (-30 - Math.random() * 60) + 'px'); b.style.setProperty('--r', (Math.random() * 90 - 45) + 'deg'); sc.appendChild(b); setTimeout(() => b.remove(), 1150); }
+}
+// Flags sit along the road by time of day (morning left, night right), in order, never overlapping.
+function postXs(sc, cw, ds, n) {
+  const W = sc.clientWidth, L0 = cw + 22, R0 = W - 30, N = ds.length; if (!N) return [];
+  const m = ds.map(d => C.mins(d.t) - (d.d < n.ymd ? 1440 : 0));
+  const lo = Math.min(360, m[0]), hi = Math.max(1320, m[N - 1]), gap = Math.min(46, N > 1 ? (R0 - L0) / (N - 1) : 46);
+  const xs = m.map(v => L0 + (R0 - L0) * (v - lo) / Math.max(1, hi - lo));
+  for (let i = 1; i < N; i++) xs[i] = Math.max(xs[i], xs[i - 1] + gap);
+  for (let i = N - 1; i >= 0; i--) xs[i] = Math.min(xs[i], i === N - 1 ? R0 : xs[i + 1] - gap);
+  for (let i = 0; i < N; i++) xs[i] = Math.max(xs[i], i ? xs[i - 1] + gap : L0);
+  return xs;
+}
+// How far the car may go: up to the last flag in an unbroken run of taken doses from the first one.
+const reached = () => { const ds = todayDoses(today()); let k = 0; while (k < ds.length && ds[k].at) k++; return k; };
 function honk() { const sc = $('.scene'), car = $('.car'); if (!sc || !car || busy()) return; if (isShip()) shipHorn(0); else sfx.honk(); buzz(30); const x = carPos(); car.animate([{ transform: `translateX(${x}px)` }, { transform: `translateX(${x}px) translateY(-10px)` }, { transform: `translateX(${x}px)` }], { duration: 350 }); const h = document.createElement('div'); h.className = 'honk'; h.textContent = isShip() ? 'Hoooonk!' : 'Beep beep!'; h.style.left = (x + 50) + 'px'; sc.appendChild(h); setTimeout(() => h.remove(), 900); }
 
 /* ---------- taking doses ---------- */
@@ -240,16 +252,17 @@ async function take(key) {
   if (d === n.ymd && C.mins(t) - n.min > 60 && !(await ask({ icon: '⏰', title: 'Taking it early?', text: `This dose of ${esc(m.name)} is for <b>${C.fmtT(t)}</b>. Only log it if you really took it just now.`, ok: 'Yes, I took it', cancel: 'Not yet' }))) return;
   if ((m.maxDay || m.minGap) && !(await guardOK(D, m))) return;
   if (C.takenAt(D, key) || busy()) return;
-  const p0 = prog(), ts = now();
+  const k0 = reached(), ts = now();
   D.log[key] = { t: ts, p: m.perDose, u: ts, ...(m.prn ? { f: 1 } : {}) };
   U.act(D, '✅', `Took ${m.name} (${C.fmtT(t)} dose)`);
   if (D.snz[key]) D.snz[key] = { until: 0, u: ts };
-  const win = d === n.ymd && p0 < 1 && C.dosesOn(D, n.ymd).every(x => x.at) && C.dosesOn(D, n.ymd).length > 0, hold = L.set.game ? (reduce ? 800 : win ? 3300 : 1800) : 1500;
+  const k1 = reached(), all = todayDoses(n), win = k1 === all.length && k1 > k0;
+  const hops = Math.max(0, k1 - k0), hold = L.set.game && hops ? (reduce ? 800 : hops * (isShip() ? 1100 : 900) + (win ? 1800 : 400)) : 1500;
   heroLock = ts + hold; persist(); U.closeSheet(); render();
-  const p1 = prog();
   sfx.take(); buzz([40, 40, 60]); pop('+10');
-  if (L.set.game) drive(p0, p1, win);
-  if (win) setTimeout(() => { sfx.win(); buzz([60, 50, 60, 50, 120]); pop('All done! 🏁'); }, 1700);
+  if (L.set.game && hops) drive(k0, k1, win);
+  else if (L.set.game && k1 < all.length) { const w = all[k1]; setTimeout(() => toast(`Logged ✓ Your ${isShip() ? 'ship' : 'car'} waits at the ${C.fmtT(w.t)} flag until you take that one.`), 400); }
+  if (win) setTimeout(() => { sfx.win(); buzz([60, 50, 60, 50, 120]); pop('All done! 🏁'); }, hold - 1700);
   setTimeout(render, hold + 60); queueSync();
 }
 // Log an as-needed dose. If the medicine has a repeat interval, plan the next doses on Today automatically.
@@ -305,6 +318,7 @@ function viewToday() {
   return `<h1>${name ? 'Hi ' + esc(name) + ' 👋' : 'Today'}</h1>
   <div class="chips"><button data-a="stars">⭐ ${st.pts}</button><button data-a="streak">🔥 ${st.streak}</button><button data-a="level">Lv ${st.lvl} · ${st.title}</button>${set.game ? '<button data-a="garage" aria-label="Garage">🚗</button>' : ''}</div>
   ${sceneHtml(all)}<p class="status">${line}</p>
+  ${!L.set.tip1 && all.length ? `<div class="coach"><span>👋 <b>This is your race for today.</b> Each flag is a dose, in time order. After you take one, tap <b>Take</b> and your ${isShip() ? 'ship sails' : 'car drives'} to the next flag. Reach the finish to win the day!</span><button class="mini-btn" data-a="tipok">Got it</button></div>` : ''}
   ${all.length ? `<div class="list">${all.map(d => doseRow(d, n, d === nxt)).join('')}</div>` : ''}
   ${streakHint(st)}${pushBanner()}${activeSick()}${buyLink(n)}${prnHtml()}`;
 }
@@ -373,8 +387,8 @@ function libEditSheet(id) {
   <label>Price per ${L0.unit || 'pill'} (${esc(D.cfg.cur)})</label><input type="number" min="0" step="0.01" id="le_p" value="${pr}" placeholder="e.g. 2.50">
   <label>My note <span class="mini">(optional)</span></label><input type="text" id="le_note" value="${esc(L0.mynote || '')}" placeholder="e.g. Works best after eating">
   <div class="alert"><i>🔒</i><span>Safety limit stays the same<small>${U.LIB[id].lim}</small></span></div>
-  <button class="btn full big" data-a="lesave" data-id="${id}">Save</button>
-  ${D.cfg.libOv && D.cfg.libOv[id] ? `<button class="btn ghost full" style="margin-top:8px" data-a="lereset" data-id="${id}">Go back to the default info</button>` : ''}`);
+  ${D.cfg.libOv && D.cfg.libOv[id] ? `<button class="link" data-a="lereset" data-id="${id}">Go back to the default info</button>` : ''}
+  <div class="sbar"><button class="btn ghost" data-a="close">Cancel</button><button class="btn" data-a="lesave" data-id="${id}">Save</button></div>`);
 }
 const usualIds = k => { const D = L.doc, set = (D.cfg.symMeds || {})[k]; return (set || U.SYM[k].m.map(id => myLibMed(id)).filter(Boolean).map(m => m.id)).filter(id => D.meds[id] && !D.meds[id].del); };
 function usualHtml(k) {
@@ -387,9 +401,9 @@ function usualHtml(k) {
 }
 function usualSheet() {
   const D = L.doc, ids = new Set(usualIds(sx)), ms = C.medList(D);
-  U.openSheet(`<h1 style="margin-top:0">${U.SYM[sx].e} Usual medicine</h1><p class="sub">What do you usually take for ${esc(U.SYM[sx].n.toLowerCase())}? Tick one or more.</p>
+  U.sheetAs('usual'); U.openSheet(`<h1 style="margin-top:0">${U.SYM[sx].e} Usual medicine</h1><p class="sub">What do you usually take for ${esc(U.SYM[sx].n.toLowerCase())}? Tick one or more.</p>
   <div class="card">${ms.map(m => `<button class="check ${ids.has(m.id) ? 'on' : ''}" data-a="usualtog" data-id="${m.id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(m.name)}<small>${esc(C.schedText(m))}</small></span></button>`).join('') || '<p class="mini">No medicines yet.</p>'}</div>
-  <button class="btn ghost full" data-a="usualnew">+ Add a new medicine</button><button class="btn full" style="margin-top:8px" data-a="close">Done</button>`);
+  <button class="btn ghost full" data-a="usualnew">+ Add a new medicine</button><div class="sbar"><span></span><button class="btn" data-a="close">Done</button></div>`);
 }
 function buyList(k) {
   const D = L.doc, x = U.SYM[k], items = [];
@@ -434,7 +448,7 @@ function logSheet(k) {
    <label>How bad is it?</label><div class="opt" id="ls_sev">${[1, 2, 3].map(v => `<button data-a="lssev" data-v="${v}">${U.SEVE[v]} ${U.SEV[v]}</button>`).join('')}</div>
    <label>Anything to add? <span class="mini">(optional)</span></label><textarea id="ls_note" rows="2" placeholder="e.g. Started after lunch, a bit dizzy too"></textarea>
    ${meds.length + extra.length ? `<label>Did you take something for it just now?</label><div class="card" style="margin:0">${meds.map(m => `<button class="check" data-a="lstook" data-id="${m.id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(m.name)}<small>${m.perDose} now${(m.every || (m.lib && U.LIB[m.lib] && U.LIB[m.lib].every)) ? ' · next doses go on Today' : ''}</small></span></button>`).join('')}${extra.map(id => `<button class="check" data-a="lstook" data-id="lib:${id}"><span class="box">✓</span><span class="tx" style="text-decoration:none;color:inherit">${esc(U.lib(D, id).n)}<small>Adds it to your medicines · next doses go on Today</small></span></button>`).join('')}</div>` : ''}
-   <button class="btn full big" style="margin-top:16px" data-a="lssave">Save to logbook</button>`);
+   <div class="sbar"><button class="btn ghost" data-a="close">Cancel</button><button class="btn" data-a="lssave">Save to logbook</button></div>`);
 }
 
 /* ---------- stars, streak, level: each with its own details ---------- */
@@ -491,7 +505,7 @@ function garageHtml() {
   return GROUPS.map(([g, label]) => `<div class="gh">${label}</div><div class="garage ${g === 'ships' ? 'ships' : ''}">${CAR_MODELS.filter(m => m.group === g).map(m => `<button class="${cur === m.id ? 'on' : ''}" data-a="model" data-v="${m.id}">${m.draw(COLORS[col] || COLORS[0])}<b>${m.name}</b><span>${m.type}</span></button>`).join('')}</div>`).join('')
   + `<div class="gh">🎨 Color${isShip() ? ' (flag and stripe)' : ''}</div><div class="opt">${COLORS.map((c, i) => `<button class="sw ${col === i ? 'on' : ''}" style="background:${c}" aria-label="${COLOR_NAMES[i]}" data-a="color" data-v="${i}"></button>`).join('')}</div>`;
 }
-const garageSheet = () => U.openSheet(`<h1 style="margin-top:0">🚗 Garage</h1><p class="sub">Pick your ride. Change it any time.</p>${garageHtml()}<button class="btn full" style="margin-top:16px" data-a="close">Done</button>`);
+const garageSheet = () => { U.sheetAs('garage'); U.openSheet(`<h1 style="margin-top:0">🚗 Garage</h1><p class="sub">Pick your ride. Change it any time.</p>${garageHtml()}<div class="sbar"><span class="mini">Now: <b>${esc(veh().name)}</b></span><button class="btn" data-a="close">Done</button></div>`); };
 const shareIcon = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px"><path d="M12 3v12M7 8l5-5 5 5"/><rect x="4" y="11" width="16" height="10" rx="2"/></svg>';
 function viewInstall() {
   if (inAppBrowser) return `<div class="guide"><div class="gbody"><div class="gicon">🧭</div><h1>Open in your browser</h1><p class="lead">You opened BlovMed inside another app. Reminders only work from ${isIOS ? 'Safari' : 'Chrome'}.</p>
@@ -509,7 +523,7 @@ function viewInstall() {
 function viewGuide() {
   const D = L.doc, name = D.cfg.name, helper = D.cfg.helper, ms = C.medList(D);
   const body = [
-    () => `<div class="gicon">💖</div><h1>Welcome${name ? ', ' + esc(name) : ''}!</h1><p class="lead">BlovMed reminds you to take your meds, plans what to buy, and makes it a little game.</p>
+    () => `<div class="intro"><div class="road"></div><div class="car drivein">${carSVG()}</div><span class="hearts">💖</span></div><h1>Welcome${name ? ', ' + esc(name) : ''}!</h1><p class="lead">BlovMed reminds you to take your meds, plans what to buy, and makes it a little game.</p>
       ${D.cfg.gift ? `<div class="gift"><small>💌 A message from ${esc(helper || 'someone who cares about you')}</small>${esc(D.cfg.gift)}</div>` : ''}
       <label>What should I call you?</label><input type="text" id="g_name" data-s="name" value="${esc(name)}" placeholder="Your name or nickname">`,
     () => `<div class="gicon">🗓️</div><h1>How it works</h1><p class="lead">Just 1 tap a dose.</p>
@@ -529,7 +543,7 @@ function viewGuide() {
       <div class="step"><span class="e">🤒</span><span><b>Feeling sick?</b><span>Tap Sick to see what to take, eat and buy.</span></span></div>
       <div class="step"><span class="e">⚙️</span><span><b>Want to change something?</b><span>Everything is in Settings, including this guide.</span></span></div>`,
   ][gs]();
-  return `<div class="guide"><div class="gbody">${body}</div>
+  return `<div class="guide"><div class="gbody" data-step="${gs}">${body}</div>
    <div class="dots">${Array.from({ length: GSTEPS }, (_, i) => `<i class="${i === gs ? 'on' : ''}"></i>`).join('')}</div>
    <div class="gnav">${gs ? '<button class="btn ghost" data-a="gback">← Back</button>' : ''}<button class="btn" data-a="${gs === GSTEPS - 1 ? 'gdone' : 'gnext'}">${gs === GSTEPS - 1 ? (ms.length ? "Let's go! 🏎️" : 'Add my first medicine') : 'Next →'}</button></div>
    ${gs < GSTEPS - 1 ? '<button class="link" data-a="gdone">Skip the guide</button>' : ''}</div>`;
@@ -539,7 +553,7 @@ function viewGuide() {
 const tog = (k, l, cfg) => { const v = cfg ? L.doc.cfg[k] : L.set[k]; return `<div class="row"><span>${l}</span><div class="opt"><button class="${v ? 'on' : ''}" data-a="${cfg ? 'ctog' : 'tog'}" data-k="${k}">${v ? 'On' : 'Off'}</button></div></div>`; };
 function viewSettings() {
   const st = L.set, D = L.doc, o = (k, arr, labels) => arr.map((v, i) => `<button class="${st[k] === v ? 'on' : ''}" data-a="opt" data-k="${k}" data-v='${JSON.stringify(v)}'>${labels[i]}</button>`).join('');
-  const pushTxt = { on: '<span class="pill ok">On</span>', off: '<button class="mini-btn" data-a="perm">Turn on</button>', broken: '<button class="mini-btn red" data-a="perm">Fix</button>', denied: '<span class="pill bad">Blocked</span>', unsupported: '<span class="pill warn">Add to Home Screen</span>', noconfig: '<span class="pill warn">Not set up</span>', checking: '' }[pushState];
+  const pushTxt = { on: '<span class="pill ok">On</span>', off: '<button class="mini-btn" data-a="perm">Turn on</button>', broken: '<button class="mini-btn red" data-a="perm">Fix</button>', denied: '<span class="pill bad">Blocked</span>', unsupported: '<span class="pill warn">Add to Home Screen</span>', noconfig: '<span class="pill warn">Not set up</span>', checking: '<span class="mini">Checking…</span>' }[pushState];
   const row = (l, r) => `<div class="srow"><span>${l}</span>${r}</div>`;
   const sw = (k, cfg) => { const v = cfg ? D.cfg[k] : st[k]; return `<button class="toggle ${v ? 'on' : ''}" data-a="${cfg ? 'ctog' : 'tog'}" data-k="${k}" aria-pressed="${!!v}"><i></i></button>`; };
   return `<h1>Settings</h1>
@@ -577,12 +591,12 @@ function render() {
   const gate = ((isIOS && !standalone) || inAppBrowser) && !L.set.installSkip;
   if (gate || !L.dev || !L.set.guided) {
     $('#nav').innerHTML = '';
-    $('#app').innerHTML = gate ? viewInstall() : !L.dev ? viewLogin() : viewGuide();
+    U.keep($('#app'), () => { $('#app').innerHTML = gate ? viewInstall() : !L.dev ? viewLogin() : viewGuide(); });
     return;
   }
   const nm = (L.doc.prof && L.doc.prof.full) || L.doc.cfg.name || '';
-  $('#app').innerHTML = (tab === 'me' ? '' : `<button class="avatar top" data-a="me" aria-label="Profile and settings">${esc((nm[0] || '👤').toUpperCase())}</button>`)
-    + (tab === 'today' ? viewToday() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(L.doc, false) : tab === 'sick' ? viewSick() : tab === 'buy' ? U.buyHtml(L.doc, false) : viewMe());
+  U.keep($('#app'), () => { $('#app').innerHTML = (tab === 'me' ? '' : `<button class="avatar top" data-a="me" aria-label="Profile and settings">${esc((nm[0] || '👤').toUpperCase())}</button>`)
+    + (tab === 'today' ? viewToday() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(L.doc, false) : tab === 'sick' ? viewSick() : tab === 'buy' ? U.buyHtml(L.doc, false) : viewMe()); });
   $('#nav').innerHTML = [['today', '🏠', 'Today'], ['meds', '💊', 'Meds'], ['sick', '🤒', 'Sick'], ['buy', '🛒', 'Buy'], ['money', '💰', 'Money']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
   requestAnimationFrame(placeCar);
   const n = today(), late = [...lastNight(n), ...C.dosesOn(L.doc, n.ymd)].filter(d => status(d, n) === 'overdue').length;
@@ -671,9 +685,12 @@ document.addEventListener('click', async ev => {
   else if (a === 'gperm') { await enablePush(); render(); }
   else if (a === 'gdone') {
     const n = $('#g_name'); if (n && n.value.trim() !== D.cfg.name) D.cfg = { ...D.cfg, name: n.value.trim(), u: now() };
-    L.set.guided = true; gs = 0; tab = 'today'; save(); window.scrollTo(0, 0); sfx.win();
+    L.set.guided = true; gs = 0; tab = 'today'; save(); window.scrollTo(0, 0); sfx.win(); buzz([40, 40, 80]);
+    requestAnimationFrame(() => { const c = $('.car'), sc = $('.scene'); if (c && sc) { const x = c.style.transform; c.animate([{ transform: 'translateX(-140px)' }, { transform: x }], { duration: reduce ? 200 : 1200, easing: 'cubic-bezier(.2,.8,.2,1)' }); if (isShip()) shipHorn(.2); else vroom(); confetti(sc, sc.clientWidth / 2); } });
+    setTimeout(() => toast(`Let's go${D.cfg.name ? ', ' + D.cfg.name : ''}! 🏁`), 500);
     if (!C.medList(D).length) setTimeout(() => U.openEditor(CX), 300);
   }
+  else if (a === 'tipok') { L.set.tip1 = true; persist(); render(); }
   else if (a === 'guide') { L.set.guided = false; gs = 0; persist(); render(); window.scrollTo(0, 0); }
   else if (a === 'noinstall') { L.set.installSkip = true; persist(); render(); }
   else if (a === 'install') { if (installEvt) { installEvt.prompt(); installEvt = null; } }

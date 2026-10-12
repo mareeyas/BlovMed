@@ -33,8 +33,9 @@ async function sync() {
   try {
     const body = { ...me(), doc: A.doc, name: 'Back office' }; if (A.sendSub !== undefined) body.sub = A.sendSub;
     const j = await api('/p/sync', body);
+    const before = JSON.stringify(A.doc) + JSON.stringify(A.meta || {});
     delete A.sendSub; A.doc = C.merge(A.doc, j.doc); A.meta = j.meta; A.synced = now(); persist();
-    if (!U.sheetOpen() && !typing()) render();
+    if (before !== JSON.stringify(A.doc) + JSON.stringify(A.meta || {}) && !U.sheetOpen() && !typing()) render();
   } catch (e) {
     if (e.status === 401) { A = null; localStorage.removeItem(AK); render(); say('Signed out', 'Please sign in again.', '🔐'); }
   } finally { syncing = false; if (again) { again = false; queueSync(200); } }
@@ -192,10 +193,10 @@ function sendLoginSheet(pin) {
 }
 function render() {
   document.body.classList.add('wide');
-  if (!A) { $('#app').innerHTML = viewLogin(); $('#nav').innerHTML = ''; return; }
+  if (!A) { U.keep($('#app'), () => { $('#app').innerHTML = viewLogin(); }); $('#nav').innerHTML = ''; return; }
   const nm = ((A.meta || {}).adminNames || [])[0];
-  $('#app').innerHTML = `<div class="topbar">${nm ? '@' + esc(nm) + ' · ' : ''}<span>${A.synced ? 'live · ' + U.ago(A.synced) : ''}</span><button class="mini-btn ghost" data-a="logout">Sign out</button></div>`
-    + (tab === 'home' ? viewHome() : tab === 'act' ? viewActivity() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(A.doc, true) : tab === 'health' ? viewHealth() : tab === 'buy' ? U.buyHtml(A.doc, true) : viewSettings());
+  U.keep($('#app'), () => { $('#app').innerHTML = `<div class="topbar">${nm ? '@' + esc(nm) + ' · ' : ''}<span>${A.synced ? 'live · ' + U.ago(A.synced) : ''}</span><button class="mini-btn ghost" data-a="logout">Sign out</button></div>`
+    + (tab === 'home' ? viewHome() : tab === 'act' ? viewActivity() : tab === 'meds' ? viewMeds() : tab === 'money' ? U.moneyHtml(A.doc, true) : tab === 'health' ? viewHealth() : tab === 'buy' ? U.buyHtml(A.doc, true) : viewSettings()); });
   $('#nav').innerHTML = [['home', '📋', 'Overview'], ['act', '📜', 'Activity'], ['meds', '💊', 'Meds'], ['health', '🩺', 'Health'], ['buy', '🛒', 'Buy'], ['set', '⚙️', 'Settings']].map(([k, i, l]) => `<button data-a="tab" data-k="${k}" class="${tab === k ? 'on' : ''}"><i>${i}</i>${l}</button>`).join('');
 }
 
@@ -273,7 +274,7 @@ setInterval(() => { if (!document.hidden && A) sync(); }, 8000);
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'sync' && A) sync(); });
 const liveT = {};
 document.addEventListener('input', ev => { const k = ev.target.dataset && ev.target.dataset.s; if (!A || !['name', 'helper', 'gift'].includes(k)) return; clearTimeout(liveT[k]); liveT[k] = setTimeout(() => { A.doc.cfg = { ...A.doc.cfg, [k]: ev.target.value.trim(), u: now() }; quiet(); }, 600); });
-setInterval(() => { if (A && !U.sheetOpen() && !typing()) render(); }, 30000);
+setInterval(() => { if (A && !U.sheetOpen() && !typing()) render(); }, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && A) sync(); });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 render(); if (A) { sync(); checkPush(); }

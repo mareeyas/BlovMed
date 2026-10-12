@@ -25,14 +25,31 @@ export const say = (title, text, icon = 'ℹ️') => ask({ title, text, ok: 'Got
 let ignorePop = 0, backFn = null;
 export const onBack = fn => { backFn = fn; };
 export function pushView() { history.pushState({ v: 1 }, ''); }
-export function openSheet(html, noBack) {
-  if (!sheetOpen()) history.pushState({ sheet: 1 }, '');
-  $('#sheetBody').innerHTML = (noBack ? '' : '<button class="back" data-a="close">← Back</button>') + html;
-  $('#sheet').classList.add('open'); $('#sheetBody').scrollTop = 0;
+// Re-draw without losing the reader's place: keeps scroll position and any opened sections.
+const dkey = d => d.dataset.key || (d.querySelector('summary') ? d.querySelector('summary').textContent.trim() : '');
+export function keep(root, fn, scroller) {
+  const sc = scroller || null, y = sc ? sc.scrollTop : window.scrollY;
+  const open = new Set([...root.querySelectorAll('details')].filter(d => d.open).map(dkey));
+  const closed = new Set([...root.querySelectorAll('details')].filter(d => !d.open).map(dkey));
+  const fid = document.activeElement && root.contains(document.activeElement) ? document.activeElement.id : '';
+  fn();
+  root.querySelectorAll('details').forEach(d => { const k = dkey(d); if (open.has(k)) d.open = true; else if (closed.has(k)) d.open = false; });
+  if (sc) sc.scrollTop = y; else window.scrollTo(0, y);
+  if (fid) { const f = document.getElementById(fid); if (f) { f.focus({ preventScroll: true }); try { const v = f.value; f.setSelectionRange && f.setSelectionRange(v.length, v.length); } catch (e) {} } }
 }
+export function openSheet(html, noBack) {
+  const body = $('#sheetBody'), was = sheetOpen();
+  if (!was) history.pushState({ sheet: 1 }, '');
+  const draw = () => { body.innerHTML = (noBack ? '' : '<button class="back" data-a="close">← Back</button>') + html; };
+  if (was && sheetKind && sheetKind === lastKind) keep(body, draw, body); else { draw(); body.scrollTop = 0; }
+  lastKind = sheetKind;
+  $('#sheet').classList.add('open');
+}
+let lastKind = null;
+export function sheetAs(kind) { sheetKind = kind; }
 export function closeSheet(fromPop) {
   const was = sheetOpen();
-  $('#sheet').classList.remove('open'); E = null; sheetKind = null;
+  $('#sheet').classList.remove('open'); E = null; sheetKind = null; lastKind = null;
   if (was && !fromPop && history.state && history.state.sheet) { ignorePop++; history.back(); }
 }
 export const goBack = () => history.back();
@@ -204,7 +221,7 @@ function drawBuy() {
   <label>How many pills?</label><input type="number" id="b_pills" min="1" inputmode="numeric" value="${B.pills}" placeholder="e.g. 30">
   <label>Total I paid (${esc(doc.cfg.cur)})</label><input type="number" id="b_cost" min="0" step="0.01" inputmode="decimal" value="${B.cost}" placeholder="${m.price ? 'about ' + money(doc, m.price) + ' per pill' : 'e.g. 360'}">
   <p class="mini" id="b_hint">${buyHint()}</p>
-  <button class="btn full big" data-a="buysave">Save</button><button class="btn ghost full" style="margin-top:10px" data-a="close">Cancel</button>`);
+  <div class="sbar"><button class="btn ghost" data-a="close">Cancel</button><button class="btn" data-a="buysave">Save</button></div>`);
 }
 function buyHint() {
   const doc = CX.doc(), m = doc.meds[B.med], n = +B.pills || 0, c = +B.cost;
@@ -245,9 +262,8 @@ function drawEditor() {
   <details open><summary>Pills and price</summary>
   <div class="two"><div><label>Pills I have now</label><input type="number" id="f_stock" min="0" value="${e._stock}"></div><div><label>Price per pill (${esc(doc.cfg.cur)})</label><input type="number" id="f_price" min="0" step="0.01" value="${e.price || ''}" placeholder="0"></div></div>
   <div class="calc"><span class="mini">Only know the box price? Type it here and I'll work out the price per pill.</span><div class="two"><input type="number" id="f_pack" min="0" step="0.01" placeholder="Box price"><input type="number" id="f_packn" min="1" placeholder="Pills in box"></div></div></details>
-  <button class="btn full big" style="margin-top:18px" data-a="savem">Save</button>
-  <button class="btn ghost full" style="margin-top:10px" data-a="close">Cancel</button>
-  ${e.isNew ? '' : '<button class="btn red full" style="margin-top:10px" data-a="delm">Delete this medicine</button>'}`);
+  ${e.isNew ? '' : '<button class="link" style="color:var(--bad)" data-a="delm">Delete this medicine</button>'}
+  <div class="sbar"><button class="btn ghost" data-a="close">Cancel</button><button class="btn" data-a="savem">Save</button></div>`);
 }
 function edHint() {
   const e = E, t = e.sched.type, pd = t === 'prn' ? 0 : e.times.length * e.perDose;
@@ -375,7 +391,7 @@ export function openProfileEdit() {
   sheetKind = 'prof';
   openSheet(`<h1 style="margin-top:0">✏️ ${ROLE === 'admin' ? 'His' : 'My'} profile</h1><p class="sub">Fill in what you know. Skip anything you like.</p>
    ${PF.map(([title, fields]) => `<details class="sec card" ${title === 'Me' ? 'open' : ''}><summary><b>${title}</b></summary><div>${fields.map(field).join('')}</div></details>`).join('')}
-   <p class="mini" id="pf_state" style="text-align:center">Changes save automatically as you type.</p><button class="btn full big" data-a="profsave">Done</button>`);
+   <div class="sbar"><span class="mini" id="pf_state">Saves automatically as you type</span><button class="btn" data-a="profsave">Done</button></div>`);
 }
 
 /* ---------- sick logbook ---------- */

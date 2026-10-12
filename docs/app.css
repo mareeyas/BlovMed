@@ -198,3 +198,27 @@ h1{font-size:21px;margin:4px 0 2px;padding-right:48px}h2{font-size:15px;margin:1
 .feed .ev.her{background:var(--bg)}
 .topbar{display:flex;justify-content:flex-end;gap:8px;align-items:center;font-size:13px;color:var(--mute);margin-bottom:2px}
 @media (min-width:900px){.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}}
+/* ---------- v8: steady layout, fixed action bars, first landing ---------- */
+.sbar{position:sticky;bottom:calc(-24px - env(safe-area-inset-bottom,0px));margin:14px -16px calc(-24px - env(safe-area-inset-bottom,0px));padding:10px 16px calc(12px + env(safe-area-inset-bottom,0px));background:var(--bg);border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;justify-content:flex-end;z-index:6}
+.sbar .btn{flex:1;max-width:220px}.sbar>span{flex:1;font-size:13px;color:var(--mute)}
+#sheetBody{max-height:88vh;overflow-y:auto;overscroll-behavior:contain}
+.coach{display:flex;gap:10px;align-items:center;background:var(--card);border:2px dashed var(--acc);border-radius:14px;padding:10px 12px;margin:0 0 8px;font-size:14px;animation:gin .4s ease-out}
+.coach span{flex:1}
+.post.alt b{transform:translateY(-15px)}.post.alt:after{height:27px;margin-top:-15px}
+.intro{position:relative;height:96px;margin:6px 0 4px;overflow:hidden;border-radius:16px;background:linear-gradient(var(--line),var(--card))}
+.intro .road{height:30px}.intro .road:after{top:13px}
+.intro .car{position:absolute;bottom:16px;left:50%;width:88px;margin-left:-44px}
+.intro .car.drivein{animation:drivein 1.6s cubic-bezier(.2,.8,.2,1) both}
+@keyframes drivein{0%{transform:translateX(-260px)}70%{transform:translateX(14px) rotate(-3deg)}85%{transform:translateX(-4px) rotate(2deg)}100%{transform:none}}
+.intro .hearts{position:absolute;top:8px;left:50%;font-size:28px;transform:translateX(-50%);animation:heartpop .6s 1.2s both}
+@keyframes heartpop{from{transform:translateX(-50%) scale(0)}70%{transform:translateX(-50%) scale(1.3)}to{transform:translateX(-50%) scale(1)}}
+.gbody{animation:gin .35s ease-out}@keyframes gin{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.guide .gicon{animation:bounce 2s ease-in-out infinite}@keyframes bounce{50%{transform:translateY(-6px)}}
+.guide{min-height:calc(100vh - 40px);min-height:calc(100dvh - 40px)}
+.chips{padding-right:44px}
+.status{min-height:22px}
+.lbody{overflow:hidden}.lbody span{overflow-wrap:anywhere}
+.row{gap:10px}.row>*:last-child{text-align:right}
+.toast{max-width:min(92vw,420px)}
+@media (min-width:700px){.sheet{align-items:center}.sheet>div{border-radius:24px;max-height:88vh}.sbar{bottom:-24px}}
+@media (prefers-reduced-motion:reduce){.intro .car.drivein,.gbody,.coach,.guide .gicon{animation:none}}
