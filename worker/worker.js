@@ -99,7 +99,7 @@ async function run(env) {
 }
 
 /* ======================= one account (Durable Object) ======================= */
-const DOCKEYS = ['v', 'gen', 'meds', 'log', 'prn', 'buys', 'shop', 'sick', 'snz', 'act', 'cfg', 'prof', 'game'];
+const DOCKEYS = ['v', 'gen', 'meds', 'log', 'prn', 'buys', 'shop', 'sick', 'snz', 'act', 'cfg', 'prof', 'game', 'comp'];
 function upgrade(p) {
   p.devs = p.devs || {};
   if (p.subs) { for (const r of ['phone', 'admin']) if (p.subs[r]) p.devs['old-' + r] = { role: r, sub: p.subs[r], seen: (p.seen || {})[r] || 0 }; delete p.subs; }

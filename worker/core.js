@@ -26,8 +26,8 @@ export const hrs = (first, gap, cnt) => { const b = mins(first), o = []; for (le
 // Every record carries u (last changed, ms). Merging keeps the newest copy of each record,
 // so the phone and the back office can both edit and always end up with the same data.
 export const DEFCFG = { paydays: [15, 30], cur: '₱', lowDays: 4, alertHour: 10, shopHour: 18, nags: true, miss: 60, name: '', helper: '', gift: '', libPrice: {}, libOv: {}, symMeds: {}, ptsBase: 0, resetAt: 0, resetDay: '', model: '', color: -1, u: 0 };
-export const newDoc = () => ({ v: 2, gen: 0, act: {}, meds: {}, log: {}, prn: {}, buys: {}, shop: {}, sick: {}, snz: {}, prof: { u: 0 }, cfg: { ...DEFCFG, libPrice: {}, libOv: {}, symMeds: {} } });
-const MAPS = ['meds', 'log', 'prn', 'buys', 'shop', 'sick', 'snz', 'act'];
+export const newDoc = () => ({ v: 2, gen: 0, act: {}, comp: {}, meds: {}, log: {}, prn: {}, buys: {}, shop: {}, sick: {}, snz: {}, prof: { u: 0 }, cfg: { ...DEFCFG, libPrice: {}, libOv: {}, symMeds: {} } });
+const MAPS = ['meds', 'log', 'prn', 'buys', 'shop', 'sick', 'snz', 'act', 'comp'];
 const newer = (a, b) => !a || (b.u || 0) > (a.u || 0) || ((b.u || 0) === (a.u || 0) && JSON.stringify(b) > JSON.stringify(a));
 
 export function merge(a, b, now = Date.now()) {
