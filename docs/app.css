@@ -246,3 +246,14 @@ h1{font-size:21px;margin:4px 0 2px;padding-right:48px}h2{font-size:15px;margin:1
 .gnotes{font-family:Georgia,serif;font-size:15px;line-height:1.7;word-spacing:4px;margin:6px 0 0}.gnotes i{font-style:normal;color:var(--mute)}
 .gpiece-row{width:100%;background:none;border:0;border-bottom:1px solid var(--line);font:inherit;color:inherit;text-align:left;padding-right:12px}
 .gpiece-row .mini{white-space:nowrap}
+/* ---------- Compose ---------- */
+#ctitle{margin:6px 0 8px}
+.ctools{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.ctools .mini-btn.on{background:var(--acc);color:var(--accink)}
+.cbpm{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-size:14px}.cbpm button{width:28px;height:28px;border-radius:8px;border:2px solid var(--line);background:var(--card);font-weight:800;color:var(--ink)}.cbpm small{color:var(--mute)}
+.cnotes{display:flex;gap:6px;overflow-x:auto;padding:10px 2px;min-height:58px;scrollbar-width:thin}
+.chip{flex:none;border:2px solid var(--line);background:var(--card);border-radius:10px;padding:4px 8px;font-weight:800;font-size:14px;color:var(--ink);font-family:Georgia,serif}
+.chip small{display:block;font-family:inherit;font-weight:400;font-size:10px;color:var(--mute)}.chip.on{border-color:var(--acc);background:var(--acc);color:var(--accink)}.chip.on small{color:var(--accink)}
+.chip.play{background:var(--okbg);border-color:var(--ok)}
+.cedit{display:flex;gap:6px;align-items:center;flex-wrap:wrap;min-height:34px}
+.coct{display:flex;justify-content:space-between;align-items:center;margin:8px 0;font-size:13px;color:var(--mute)}
+.piano.compose{height:min(38vh,210px)}

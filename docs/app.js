@@ -3,6 +3,7 @@ import * as C from './core.js';
 import * as U from './ui.js';
 import { CAR_MODELS, COLORS, COLOR_NAMES, GROUPS, carById } from './cars.js';
 import * as G from './game.js';
+import * as CP from './compose.js';
 const { $, esc, today, toast, pl, ask, say } = U;
 
 const CFG = window.CFG || {};
@@ -52,6 +53,7 @@ function medLine() {
   return (nxt ? `<div class="alert"><i>⏰</i><span>Next: ${esc(nxt.m.name)} at ${C.fmtT(nxt.t)}<small>${pl(all.filter(d => !d.at).length, 'dose')} left today</small></span></div>` : all.length ? '<div class="alert ok"><i>🏁</i><span>All meds done today. Play away!</span></div>' : '')
     + (shop ? `<button class="alert" data-a="tab" data-k="buy"><i>🛒</i><span>${pl(shop, 'thing')} on your buy list</span></button>` : '');
 }
+CP.init({ doc, quiet, act: (ic, t) => U.act(L.doc, ic, t), tone: (m, s) => G.tone(m, s), audio: () => G.audio(), redraw: () => { const a = $('#app'); if (a && tab === 'compose') a.innerHTML = CP.view(); } });
 G.init({ doc, quiet, act: (ic, t) => U.act(L.doc, ic, t), carSVG: () => carSVG(), isShip: () => isShip(), medLine, honk: () => (isShip() ? shipHorn(0) : sfx.honk()), redraw: () => { const a = $('#app'); if (a && tab === 'game') a.innerHTML = G.view(); } });
 U.setCtx(CX, 'phone');
 
@@ -107,6 +109,7 @@ function route(h) {
   else if (k === 'sick') { tab = 'sick'; sx = null; render(); if (L.doc.sick[id]) U.openSick(id); }
   else if (k === 'profile') { tab = 'me'; meSeg = 'profile'; render(); }
   else if (k === 'game') { tab = 'game'; G.stop(); render(); }
+  else if (k === 'compose') { tab = 'compose'; CP.open(null); render(); }
   else if (['buy', 'money', 'meds', 'today'].includes(k)) { tab = k; render(); }
   window.scrollTo(0, 0);
 }
@@ -347,7 +350,7 @@ function viewToday() {
     : status(nxt, n) === 'due' ? `<b>💊 Time for ${esc(nxt.m.name)}.</b> Tap Take below.`
     : `Next: <b>${esc(nxt.m.name)}</b> at ${C.fmtT(nxt.t)}${st.left ? ` · ${pl(st.left, 'dose')} to go` : ''}`;
   return `<h1>${name ? 'Hi ' + esc(name) + ' 👋' : 'Today'}</h1>
-  <div class="chips"><button data-a="stars">⭐ ${st.pts}</button><button data-a="streak">🔥 ${st.streak}</button><button data-a="level">Lv ${st.lvl} · ${st.title}</button>${set.game ? '<button data-a="garage" aria-label="Garage">🚗</button>' : ''}<button data-a="game" aria-label="Play Maestro">🎹</button></div>
+  <div class="chips"><button data-a="stars">⭐ ${st.pts}</button><button data-a="streak">🔥 ${st.streak}</button><button data-a="level">Lv ${st.lvl} · ${st.title}</button>${set.game ? '<button data-a="garage" aria-label="Garage">🚗</button>' : ''}<button data-a="game" aria-label="Play Maestro">🎹</button><button data-a="compose" aria-label="Compose a melody">🎼</button></div>
   ${sceneHtml(all)}<p class="status">${line}</p>
   ${!L.set.tip1 && all.length ? `<div class="coach"><span>👋 <b>This is your race for today.</b> Each flag is one dose. Take them in any order: every time you tap <b>Take</b>, your ${isShip() ? 'ship sails' : 'car drives'} to the next flag. Reach the finish to win the day!</span><button class="mini-btn" data-a="tipok">Got it</button></div>` : ''}
   ${all.length ? `<div class="list">${all.map(d => doseRow(d, n, d === nxt)).join('')}</div>` : ''}
@@ -626,6 +629,7 @@ function render() {
     U.keep($('#app'), () => { $('#app').innerHTML = gate ? viewInstall() : !L.dev ? viewLogin() : viewGuide(); });
     return;
   }
+  if (tab === 'compose') { if ($('#cbox')) return; $('#app').innerHTML = CP.view(); $('#nav').innerHTML = navHtml(); return; }
   if (tab === 'game') { if (G.playing() && $('#gamebox')) return; $('#app').innerHTML = G.view(); $('#nav').innerHTML = navHtml(); return; }
   const nm = (L.doc.prof && L.doc.prof.full) || L.doc.cfg.name || '';
   U.keep($('#app'), () => { $('#app').innerHTML = (tab === 'me' ? '' : `<button class="avatar top" data-a="me" aria-label="Profile and settings">${esc((nm[0] || '👤').toUpperCase())}</button>`)
@@ -649,6 +653,7 @@ document.addEventListener('click', async ev => {
   const b = ev.target.closest('[data-a]'); if (!b || b.disabled) return;
   const a = b.dataset.a, D = L.doc;
   if (tab === 'game' && G.click(a, b)) return;
+  if (tab === 'compose' && await CP.click(a, b)) return;
   if (U.uiClick(a, b)) return;
   if (await U.v6Click(a, b)) return;
   if (a === 'tab') { tab = b.dataset.k; sx = null; render(); window.scrollTo(0, 0); }
@@ -678,7 +683,9 @@ document.addEventListener('click', async ev => {
     catch (e) { say(e.status === 403 ? 'Current PIN is wrong' : 'No connection', e.status === 403 ? 'Check your current PIN and try again.' : 'Try again when you are online.', '🔑'); }
   }
   else if (a === 'me') { if (tab !== 'me') prevTab = tab; tab = 'me'; U.pushView(); render(); window.scrollTo(0, 0); }
-  else if (a === 'meback' || a === 'gmback') U.goBack();
+  else if (a === 'meback' || a === 'gmback' || a === 'cmback') U.goBack();
+  else if (a === 'compose') { if (tab !== 'game' && tab !== 'compose') prevTab = tab; G.stop(); tab = 'compose'; CP.open(null); U.pushView(); render(); window.scrollTo(0, 0); }
+  else if (a === 'cgame') { CP.leave(); tab = 'game'; render(); G.playMine(b.dataset.id); window.scrollTo(0, 0); }
   else if (a === 'game') { if (tab !== 'game') prevTab = tab; tab = 'game'; G.stop(); U.pushView(); render(); window.scrollTo(0, 0); }
   else if (a === 'meseg') { meSeg = b.dataset.k; render(); }
   else if (a === 'stars') starsSheet();
@@ -777,7 +784,7 @@ document.addEventListener('input', U.uiInput);
 let liveT = null;
 document.addEventListener('input', ev => { const el = ev.target; if (!el.dataset || !el.dataset.live) return; clearTimeout(liveT); liveT = setTimeout(() => { if (el.dataset.s === 'name') { L.doc.cfg = { ...L.doc.cfg, name: el.value.trim(), u: now() }; quiet(); } }, 500); });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && !L.dev && e.target.tagName === 'INPUT') { const b = $('[data-a="signin"]'); if (b) b.click(); } });
-U.onBack(() => { if (!L.set.guided) { if (gs > 0) { gs--; render(); } return; } if (tab === 'me' || tab === 'game') { if (tab === 'game') G.stop(); tab = prevTab; render(); return; } if (sx) { sx = null; render(); } });
+U.onBack(() => { if (!L.set.guided) { if (gs > 0) { gs--; render(); } return; } if (tab === 'me' || tab === 'game' || tab === 'compose') { if (tab === 'game') G.stop(); if (tab === 'compose') CP.leave(); tab = prevTab; render(); return; } if (sx) { sx = null; render(); } });
 window.addEventListener('resize', placeCar);
 
 /* ---------- keep fresh ---------- */

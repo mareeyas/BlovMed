@@ -45,11 +45,20 @@ let ac = null, muted = false, timers = [], showList = false;
 export const init = ctx => { X = ctx; };
 export const playing = () => !!S && (S.phase === 'listen' || S.phase === 'input' || S.phase === 'wait');
 const G = () => (X && X.doc().game) || {};
+// Built-in pieces first, then his own saved melodies (Compose).
+function mine() {
+  return Object.values((X && X.doc().comp) || {}).filter(c => !c.del && c.notes && c.notes.length >= 2).sort((a, b) => b.u - a.u).map(c => {
+    const beat = 60000 / (c.bpm || 90), seq = c.notes.map(([m, ms]) => ({ name: NAMES[m % 12] + (Math.floor(m / 12) - 1), midi: m, beats: ms / beat }));
+    return { id: c.id, by: (X.doc().cfg.name || 'You'), title: c.title, part: 'your composition', key: `${c.notes.length} notes`, bpm: c.bpm || 90, mine: true, seq, notes: seq };
+  });
+}
+const ALL = () => [...PIECES, ...mine()];
+export function playMine(id) { const i = ALL().findIndex(p => p.id === id); if (i >= 0) begin(i, true); }
 export const best = () => G().best || 0;
 
 /* ---------- sound: a soft piano tone ---------- */
-function audio() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === 'suspended') ac.resume(); } catch (e) {} return ac; }
-function tone(midi, secs = .45) {
+export function audio() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === 'suspended') ac.resume(); } catch (e) {} return ac; }
+export function tone(midi, secs = .45) {
   const a = audio(); if (!a || muted) return;
   const f = 440 * Math.pow(2, (midi - 69) / 12), t = a.currentTime, g = a.createGain(), len = Math.min(3, Math.max(.6, secs * 1.6));
   g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.3, t + .012); g.gain.exponentialRampToValueAtTime(.0001, t + len);
@@ -78,7 +87,7 @@ function piano(p) {
     ${blacks.map(([m, x]) => `<button class="bk" data-m="${m}" aria-label="${NAMES[m % 12]}" style="left:calc(${x}% - ${w * .32}%);width:${w * .64}%"></button>`).join('')}</div>`;
 }
 const notesLine = p => `<p class="gnotes">${p.seq.map(x => x.rest ? '<i>rest</i>' : pretty(x.name)).join(' ')}</p>`;
-const pieceInfo = p => `<b>${esc(p.by)}</b>: ${esc(p.title)}<br><span class="mini">${esc(p.part)} · ${esc(p.key)}${p.src ? ' · checked against the ' + esc(p.src) : ''}</span>`;
+const pieceInfo = p => p.mine ? `<b>${esc(p.by)}</b>: ${esc(p.title)}<br><span class="mini">Your composition · ${p.notes.length} notes</span>` : `<b>${esc(p.by)}</b>: ${esc(p.title)}<br><span class="mini">${esc(p.part)} · ${esc(p.key)}${p.src ? ' · checked against the ' + esc(p.src) : ''}</span>`;
 
 /* ---------- screens ---------- */
 export function view() {
@@ -89,18 +98,19 @@ export function view() {
      ${X.medLine()}
      <div class="gstats"><div><b>${b}</b><span>Best score</span></div><div><b>${g.plays || 0}</b><span>Games played</span></div><div><b>${g.pieces || 0}</b><span>Pieces mastered</span></div></div>
      <button class="btn full big" data-a="gstart">▶ Concert: all ${PIECES.length} pieces</button>
-     <button class="btn ghost full" style="margin-top:8px" data-a="glist">🎼 Choose a piece</button>
-     ${showList ? `<div class="list" style="margin-top:10px">${PIECES.map((p, i) => `<button class="lrow gpiece-row" data-a="gpick" data-i="${i}"><span class="lbody"><span><b>${esc(p.by)}</b><span>${esc(p.title)}</span></span></span><span class="mini">${pb[p.id] ? '🏆 ' + pb[p.id] : p.notes.length + ' notes'}</span></button>`).join('')}</div>` : ''}
+     <div class="two" style="margin-top:8px"><button class="btn ghost" data-a="glist">🎼 Choose a piece</button><button class="btn ghost" data-a="compose">✍️ Compose</button></div>
+     ${showList ? (() => { const all = ALL(), row = (p, i) => `<button class="lrow gpiece-row" data-a="gpick" data-i="${i}"><span class="lbody"><span><b>${esc(p.by)}</b><span>${esc(p.title)}</span></span></span><span class="mini">${pb[p.id] ? '🏆 ' + pb[p.id] : p.notes.length + ' notes'}</span></button>`;
+       return `<div class="list" style="margin-top:10px">${all.slice(0, PIECES.length).map(row).join('')}</div>${all.length > PIECES.length ? `<h2>Your melodies</h2><div class="list">${all.map((p, i) => i >= PIECES.length ? row(p, i) : '').join('')}</div>` : ''}`; })() : ''}
      <details class="sec card" style="margin-top:12px"><summary><b>How to score</b></summary><div><ul>
       <li>+1 for every note you play right, +${PIECE_BONUS} for finishing a piece</li><li>${LIVES} lives ❤️ per game; a wrong note shows the right key</li>
       <li>Concert mode counts for your best score; single pieces keep their own best</li><li>Your ${X.isShip() ? 'ship' : 'car'} races ahead with every right note</li></ul></div></details></div>`;
-  const p = PIECES[S.pi];
+  const p = ALL()[S.pi] || PIECES[0];
   if (S.phase === 'over') {
     const rec = S.newBest, top = S.single ? (pb[p.id] || 0) : b;
     return `${head}<div id="gamebox" class="gamebox"><div class="gintro"><div class="gicon2">${rec ? '🏆' : '🎼'}</div><h1>${rec ? 'New record!' : 'Bravo!'}</h1>
       <div class="bigstat">${S.score}</div><p>${rec ? (S.prevBest ? `You beat your best of ${S.prevBest}!` : 'Your first high score. Now beat it!') : `Best: ${top} · ${top - S.score > 0 ? (top - S.score) + ' more to beat it' : 'so close!'}`}</p></div>
       ${S.done.length ? `<div class="card"><b>You played</b>${S.done.map(d => `<p class="mini" style="margin:6px 0 0">${pieceInfo(d)}</p>`).join('')}</div>` : ''}
-      <details class="sec card"><summary><b>The notes of ${esc(p.by)}'s excerpt</b></summary><div><p class="mini" style="margin-top:0">${pieceInfo(p)}</p>${notesLine(p)}</div></details>
+      <details class="sec card"><summary><b>The notes of ${p.mine ? 'your melody' : esc(p.by) + '\'s excerpt'}</b></summary><div><p class="mini" style="margin-top:0">${pieceInfo(p)}</p>${notesLine(p)}</div></details>
       ${X.medLine()}
       <button class="btn full big" data-a="${S.single ? 'gpick' : 'gstart'}" data-i="${S.pi}">▶ Play again</button><button class="btn ghost full" style="margin-top:8px" data-a="gmenu">Choose another piece</button></div>`;
   }
@@ -115,13 +125,14 @@ export function view() {
 function begin(pi, single) {
   audio(); clearTimers();
   const g = G();
-  S = { phase: 'wait', pi, single, len: Math.min(START_LEN, PIECES[pi].notes.length), step: 0, score: 0, lives: LIVES, done: [], speed: 1, reveal: false,
-        prevBest: single ? ((g.pb || {})[PIECES[pi].id] || 0) : (g.best || 0), newBest: false };
+  const pc = ALL()[pi];
+  S = { phase: 'wait', pi, single, len: Math.min(START_LEN, pc.notes.length), step: 0, score: 0, lives: LIVES, done: [], speed: 1, reveal: false,
+        prevBest: single ? ((g.pb || {})[pc.id] || 0) : (g.best || 0), newBest: false };
   X.redraw(); setT(listen, 700);
 }
 function msg(t, cls) { const m = $('#gmsg'); if (m) { m.textContent = t; m.className = 'gmsg ' + (cls || ''); } }
 function moveCar() {
-  const c = $('#gcar'), p = PIECES[S.pi]; if (!c) return;
+  const c = $('#gcar'), p = ALL()[S.pi]; if (!c) return;
   const prog = Math.min(1, ((S.phase === 'input' ? S.step : Math.max(0, S.len - 1))) / p.notes.length);
   c.style.left = `calc(${prog * 100}% - ${prog * 70}px)`;
 }
@@ -129,7 +140,7 @@ function light(midi, ms) { const k = document.querySelector(`#piano [data-m="${m
 // Play the first `len` notes with their real rhythm (rests included).
 function listen() {
   if (!S) return;
-  const p = PIECES[S.pi], beat = 60000 / (p.bpm * S.speed);
+  const p = ALL()[S.pi], beat = 60000 / (p.bpm * S.speed);
   S.phase = 'listen'; S.step = 0; msg('Listen… 🎧'); moveCar();
   let t = 0, count = 0;
   for (const x of p.seq) {
@@ -145,7 +156,7 @@ function press(midi) {
   if (!S) return;
   tone(midi, .4); light(midi, 220);
   if (S.phase !== 'input') return;
-  const p = PIECES[S.pi], want = p.notes[S.step].midi;
+  const p = ALL()[S.pi], want = p.notes[S.step].midi;
   if (midi !== want) { mistake(want); return; }
   S.step++; S.score++; upd(); moveCar();
   if (S.step < S.len) return;
@@ -178,7 +189,7 @@ function mistake(want) {
 function upd() { const s = $('#gscore'), l = $('#glives'); if (s) s.textContent = S.score; if (l) l.textContent = '❤️'.repeat(S.lives) + '🤍'.repeat(LIVES - S.lives); }
 function over() {
   if (!S) return;
-  const D = X.doc(), g = { ...(D.game || {}) }, t = Date.now(), p = PIECES[S.pi];
+  const D = X.doc(), g = { ...(D.game || {}) }, t = Date.now(), p = ALL()[S.pi];
   g.plays = (g.plays || 0) + 1; g.pieces = (g.pieces || 0) + S.done.length; g.last = S.score;
   if (S.single) {
     const pb = { ...(g.pb || {}) };
