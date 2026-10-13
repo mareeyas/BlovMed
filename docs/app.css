@@ -222,3 +222,24 @@ h1{font-size:21px;margin:4px 0 2px;padding-right:48px}h2{font-size:15px;margin:1
 .toast{max-width:min(92vw,420px)}
 @media (min-width:700px){.sheet{align-items:center}.sheet>div{border-radius:24px;max-height:88vh}.sbar{bottom:-24px}}
 @media (prefers-reduced-motion:reduce){.intro .car.drivein,.gbody,.coach,.guide .gicon{animation:none}}
+/* ---------- Maestro game ---------- */
+.gtop{display:flex;align-items:center;gap:10px;margin-bottom:4px}.gtop .back{padding:0}.gtop .gbest{flex:1;text-align:center;font-size:14px;color:var(--mute)}
+.gamebox{animation:gin .3s ease-out}.gintro{text-align:center}.gintro h1{padding:0;margin:4px 0}
+.gicon2{font-size:52px;line-height:1;margin-top:6px}
+.gstats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0 12px}
+.gstats div{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:10px 4px;text-align:center}.gstats b{display:block;font-size:22px}.gstats span{font-size:12px;color:var(--mute)}
+.gbar{display:flex;justify-content:space-between;align-items:center;font-weight:800}.gbar #gscore{font-size:34px;color:var(--acc)}.gbar #glives{font-size:20px;letter-spacing:2px}
+.gpiece{text-align:center;color:var(--mute);font-size:14px;margin:2px 0 8px}
+.gtrack{position:relative;height:56px;border-radius:14px;background:linear-gradient(transparent 60%,#4a3540 60%);overflow:hidden;margin-bottom:8px}
+.gtrack.sea{background:linear-gradient(#cfeaff 60%,#2f7fc8 60%)}
+.gtrack .gcar{position:absolute;bottom:8px;left:0;width:70px;transition:left .35s cubic-bezier(.3,.8,.3,1)}.gtrack.sea .gcar{width:84px;bottom:4px}
+.gtrack .gcar svg{display:block;width:100%;height:auto}.gtrack .gflag{position:absolute;right:6px;bottom:12px;font-size:22px}
+.gmsg{text-align:center;font-weight:800;font-size:18px;min-height:28px;margin:4px 0 10px;color:var(--mute)}
+.gmsg.go{color:var(--ok)}.gmsg.win{color:var(--acc);animation:pulse .6s}.gmsg.bad{color:var(--bad)}
+.piano{position:relative;display:flex;height:min(46vh,240px);user-select:none;-webkit-user-select:none;touch-action:manipulation;border-radius:0 0 12px 12px;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.18)}
+.piano .wk{flex:1;border:1px solid #d8c8d0;border-top:0;background:linear-gradient(#fff,#f3eef1);border-radius:0 0 10px 10px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:8px;font-weight:700;font-size:12px;color:#b9a3ae;transition:background .08s}
+.piano .bk{position:absolute;top:0;width:6.4%;height:60%;background:linear-gradient(#3a2a33,#1d1418);border:0;border-radius:0 0 7px 7px;z-index:2;box-shadow:0 3px 6px rgba(0,0,0,.35);transition:background .08s}
+.piano .wk.on{background:linear-gradient(var(--acc),#ffd3e7)}.piano .wk.on span{color:#fff}.piano .bk.on{background:var(--acc)}
+.piano .hint{outline:4px solid var(--ok);outline-offset:-4px}
+.gamebox.shake{animation:shake .4s}@keyframes shake{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+.game-cta{background:linear-gradient(90deg,var(--card),var(--warnbg));color:var(--ink)}

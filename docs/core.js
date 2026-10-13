@@ -47,6 +47,8 @@ export function merge(a, b, now = Date.now()) {
   for (const k of ['libPrice', 'libOv', 'symMeds']) o.cfg[k] = { ...(o.cfg[k] || {}) };
   const pa = a.prof || { u: 0 }, pb = b.prof || { u: 0 };
   o.prof = { ...(newer(pa, pb) ? pb : pa) };
+  const gma = a.game || {}, gmb = b.game || {}; // game stats: newest wins, but the best score never goes down
+  o.game = { ...(newer(gma, gmb) ? gmb : gma) }; o.game.best = Math.max(gma.best || 0, gmb.best || 0);
   prune(o, now);
   return o;
 }
