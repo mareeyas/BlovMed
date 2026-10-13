@@ -1,7 +1,7 @@
 // BlovMed service worker: instant start, offline, push alerts and tap-to-open.
 // Bump V whenever you change any app file.
-const V = 'blovmed-v16';
-const FILES = ['./', 'index.html', 'admin.html', 'app.css', 'core.js', 'ui.js', 'cars.js', 'game.js', 'compose.js', 'app.js', 'admin.js', 'config.js', 'manifest.json', 'manifest-admin.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'admin-180.png', 'admin-192.png', 'admin-512.png', 'badge-96.png'];
+const V = 'blovmed-v17';
+const FILES = ['./', 'index.html', 'admin.html', 'app.css', 'core.js', 'ui.js', 'cars.js', 'piano.js', 'game.js', 'compose.js', 'app.js', 'admin.js', 'config.js', 'manifest.json', 'manifest-admin.json', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'admin-180.png', 'admin-192.png', 'admin-512.png', 'badge-96.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(V).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });

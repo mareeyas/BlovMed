@@ -629,7 +629,7 @@ function render() {
     U.keep($('#app'), () => { $('#app').innerHTML = gate ? viewInstall() : !L.dev ? viewLogin() : viewGuide(); });
     return;
   }
-  if (tab === 'compose') { if ($('#cbox')) return; $('#app').innerHTML = CP.view(); $('#nav').innerHTML = navHtml(); return; }
+  if (tab === 'compose') { if ($('#cbox')) { CP.refreshList(); return; } $('#app').innerHTML = CP.view(); $('#nav').innerHTML = navHtml(); return; }
   if (tab === 'game') { if (G.playing() && $('#gamebox')) return; $('#app').innerHTML = G.view(); $('#nav').innerHTML = navHtml(); return; }
   const nm = (L.doc.prof && L.doc.prof.full) || L.doc.cfg.name || '';
   U.keep($('#app'), () => { $('#app').innerHTML = (tab === 'me' ? '' : `<button class="avatar top" data-a="me" aria-label="Profile and settings">${esc((nm[0] || '👤').toUpperCase())}</button>`)

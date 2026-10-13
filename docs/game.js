@@ -41,30 +41,35 @@ const isBlack = m => [1, 3, 6, 8, 10].includes(m % 12);
 const START_LEN = 3, LIVES = 3, PIECE_BONUS = 25;
 let X = null;             // app context: { doc, quiet, act, carSVG, isShip, medLine, honk, redraw }
 let S = null;             // the current game
-let ac = null, muted = false, timers = [], showList = false;
+let timers = [], showList = false;
+const gheld = new Map(); // finger -> sounding note
 export const init = ctx => { X = ctx; };
 export const playing = () => !!S && (S.phase === 'listen' || S.phase === 'input' || S.phase === 'wait');
 const G = () => (X && X.doc().game) || {};
 // Built-in pieces first, then his own saved melodies (Compose).
 function mine() {
   return Object.values((X && X.doc().comp) || {}).filter(c => !c.del && c.notes && c.notes.length >= 2).sort((a, b) => b.u - a.u).map(c => {
-    const beat = 60000 / (c.bpm || 90), seq = c.notes.map(([m, ms]) => ({ name: NAMES[m % 12] + (Math.floor(m / 12) - 1), midi: m, beats: ms / beat }));
+    const beat = 60000 / (c.bpm || 90), seq = melodyLine(c.notes).map(([m, ms]) => ({ name: NAMES[m % 12] + (Math.floor(m / 12) - 1), midi: m, beats: ms / beat }));
     return { id: c.id, by: (X.doc().cfg.name || 'You'), title: c.title, part: 'your composition', key: `${c.notes.length} notes`, bpm: c.bpm || 90, mine: true, seq, notes: seq };
   });
+}
+// Saved melodies: [midi, start, length] (older: [midi, length]). For the game: one note at a time,
+// the top note of any chord, each lasting until the next note starts (rests included in that time).
+// (notes starting within 80 ms of each other are one chord: real fingers never land at exactly the same time)
+function melodyLine(notes) {
+  if (!notes.length || notes[0].length < 3) return notes;
+  const ev = [...notes].sort((a, b) => a[1] - b[1] || b[0] - a[0]), out = [];
+  for (const [m, t, d] of ev) { const last = out[out.length - 1]; if (last && t - last.t < 80) { if (m > last.m) last.m = m; continue; } out.push({ m, t, d }); }
+  return out.map((e, i) => [e.m, i < out.length - 1 ? Math.max(60, out[i + 1].t - e.t) : e.d]);
 }
 const ALL = () => [...PIECES, ...mine()];
 export function playMine(id) { const i = ALL().findIndex(p => p.id === id); if (i >= 0) begin(i, true); }
 export const best = () => G().best || 0;
 
 /* ---------- sound: a soft piano tone ---------- */
-export function audio() { try { ac = ac || new (window.AudioContext || window.webkitAudioContext)(); if (ac.state === 'suspended') ac.resume(); } catch (e) {} return ac; }
-export function tone(midi, secs = .45) {
-  const a = audio(); if (!a || muted) return;
-  const f = 440 * Math.pow(2, (midi - 69) / 12), t = a.currentTime, g = a.createGain(), len = Math.min(3, Math.max(.6, secs * 1.6));
-  g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.3, t + .012); g.gain.exponentialRampToValueAtTime(.0001, t + len);
-  [[1, 'triangle', 1], [2, 'sine', .3], [3, 'sine', .1], [4, 'sine', .05]].forEach(([h, ty, v]) => { const o = a.createOscillator(), og = a.createGain(); o.type = ty; o.frequency.value = f * h; og.gain.value = v; o.connect(og); og.connect(g); o.start(t); o.stop(t + len + .1); });
-  g.connect(a.destination);
-}
+import * as PI from './piano.js';
+export const audio = () => PI.audio();
+export const tone = (m, secs = .45) => PI.tone(m, secs);
 const chord = (ms, at = 0) => setT(() => ms.forEach(m => tone(m, .9)), at);
 const setT = (f, ms) => { const id = setTimeout(f, ms); timers.push(id); return id; };
 const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
@@ -99,7 +104,7 @@ const bestOf = (g, id) => (mode === 'along' ? (g.apb || {}) : (g.pb || {}))[id] 
 const starsOf = (g, id) => (g.astars || {})[id] || 0;
 export function view() {
   const g = G(), b = S && S.single && ALL()[S.pi] ? Math.max(bestOf(g, ALL()[S.pi].id), S.phase === 'over' && S.newBest ? S.score : 0) : (mode === 'along' ? (g.abest || 0) : (g.best || 0));
-  const head = `<div class="gtop"><button class="back" data-a="gmback">← Back</button><span class="gbest">🏆 Best <b id="gbest">${b}</b></span><button class="mini-btn ghost" data-a="gmute">${muted ? '🔇' : '🔊'}</button></div>`;
+  const head = `<div class="gtop"><button class="back" data-a="gmback">← Back</button><span class="gbest">🏆 Best <b id="gbest">${b}</b></span><button class="mini-btn ghost" data-a="gmute">${PI.isMuted() ? '🔇' : '🔊'}</button></div>`;
   if (!S || S.phase === 'idle') {
     const all = ALL(), row = (p, i) => `<button class="lrow gpiece-row" data-a="gpick" data-i="${i}"><span class="lbody"><span><b>${esc(p.by)}</b><span>${esc(p.title)}</span></span></span><span class="mini">${mode === 'along' && starsOf(g, p.id) ? '⭐'.repeat(starsOf(g, p.id)) + ' ' : ''}${bestOf(g, p.id) ? '🏆 ' + bestOf(g, p.id) : p.notes.length + ' notes'}</span></button>`;
     return `${head}<div id="gamebox" class="gamebox">
@@ -245,7 +250,7 @@ function mistake(want) {
 }
 function press(midi) {
   if (!S) return;
-  tone(midi, .4); light(midi, 220);
+  light(midi, 220);
   if (S.phase !== 'input') return;
   if (S.mode === 'along') alongPress(midi); else memPress(midi);
 }
@@ -270,7 +275,7 @@ function over() {
   S.phase = 'over'; X.redraw();
 }
 const fanfare = () => { chord([60, 64, 67], 0); chord([65, 69, 72], 350); chord([67, 71, 74], 700); chord([72, 76, 79], 1050); vibrate([60, 50, 60, 50, 140]); };
-export function stop() { clearTimers(); S = null; }
+export function stop() { clearTimers(); PI.allOff(); S = null; }
 
 /* ---------- input ---------- */
 export function click(a, b) {
@@ -280,12 +285,18 @@ export function click(a, b) {
   if (a === 'gmenu') { stop(); X.redraw(); return true; }
   if (a === 'gopt') { guide[b.dataset.k] = !guide[b.dataset.k]; try { localStorage.setItem('blovmed.guide', JSON.stringify(guide)); } catch (e) {} const st = S; X.redraw(); S = st; alongReady(); return true; }
   if (a === 'glisten') { if (S && S.mode === 'along' && S.phase === 'input') { S.phase = 'wait'; const p = ALL()[S.pi]; playSeq(p, p.notes.length, () => { if (S) { S.phase = 'input'; glowNext(); } }); } return true; }
-  if (a === 'gmute') { muted = !muted; const btn = document.querySelector('[data-a="gmute"]'); if (btn) btn.textContent = muted ? '🔇' : '🔊'; return true; }
+  if (a === 'gmute') { PI.setMuted(!PI.isMuted()); const btn = document.querySelector('[data-a="gmute"]'); if (btn) btn.textContent = PI.isMuted() ? '🔇' : '🔊'; return true; }
   return false;
 }
+// Keys behave like a piano: the note sounds while held and stops when released.
 document.addEventListener('pointerdown', e => {
   const k = e.target.closest && e.target.closest('#piano [data-m]'); if (!k) return;
-  e.preventDefault(); press(+k.dataset.m);
+  e.preventDefault(); PI.audio(); const m = +k.dataset.m;
+  gheld.set(e.pointerId, { id: PI.noteOn(m, .8), m }); k.classList.add('down'); press(m);
 });
+['pointerup', 'pointercancel'].forEach(t => document.addEventListener(t, e => {
+  const h = gheld.get(e.pointerId); if (!h) return; gheld.delete(e.pointerId); PI.noteOff(h.id);
+  const k = document.querySelector(`#piano [data-m="${h.m}"]`); if (k) k.classList.remove('down');
+}));
 window.addEventListener('resize', () => { if (S && S.mode === 'along' && S.phase === 'input') highway(); });
 export const _test = { PIECES, state: () => S, press, ALL };
