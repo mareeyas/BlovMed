@@ -243,3 +243,6 @@ h1{font-size:21px;margin:4px 0 2px;padding-right:48px}h2{font-size:15px;margin:1
 .piano .hint{outline:4px solid var(--ok);outline-offset:-4px}
 .gamebox.shake{animation:shake .4s}@keyframes shake{20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
 .game-cta{background:linear-gradient(90deg,var(--card),var(--warnbg));color:var(--ink)}
+.gnotes{font-family:Georgia,serif;font-size:15px;line-height:1.7;word-spacing:4px;margin:6px 0 0}.gnotes i{font-style:normal;color:var(--mute)}
+.gpiece-row{width:100%;background:none;border:0;border-bottom:1px solid var(--line);font:inherit;color:inherit;text-align:left;padding-right:12px}
+.gpiece-row .mini{white-space:nowrap}
